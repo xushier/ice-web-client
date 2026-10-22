@@ -14,6 +14,7 @@ const DEFAULT_STATUS: StatusSnapshot = {
   controlMode: 'remote',
   networkError: false,
   batteryPercent: 62,
+  activation: 'off',
 };
 
 describe('CRC-16/MODBUS', () => {
@@ -33,7 +34,7 @@ describe('组帧', () => {
 
   it('0x10 默认状态（ID 13）', () => {
     const buf = encodeFrame({ id: 13, type: 0x10, data: encodeStatus(DEFAULT_STATUS) });
-    expect(toHex(buf)).toBe('5a 47 05 00 0d 10 0d 52 74 1d');
+    expect(toHex(buf)).toBe('5a 47 05 00 0d 10 0d 51 34 1c');
   });
 
   it('0x01 命令应答（ID 13）', () => {
@@ -166,6 +167,24 @@ describe('0x10 状态编码', () => {
 
   it('电量档映射 0/25/50/75', () => {
     expect([0, 24, 25, 49, 50, 74, 75, 100].map(coarseBattery)).toEqual([0, 0, 1, 1, 2, 2, 3, 3]);
+  });
+
+  it('活化状态占低字节 b1（默认），开=1 关=0', () => {
+    const [, on] = encodeStatus({ ...DEFAULT_STATUS, activation: 'on' });
+    expect(on & 0x02).toBe(0x02);
+    const [, off] = encodeStatus({ ...DEFAULT_STATUS, activation: 'off' });
+    expect(off & 0x02).toBe(0x00);
+  });
+
+  it('活化改到 b0 时 b1 让给电量档', () => {
+    const [, on] = encodeStatus({ ...DEFAULT_STATUS, activation: 'on', activationBit: 'b0' });
+    expect(on & 0x01).toBe(0x01);
+    expect(on & 0x02).toBe(0x02); // 电量 62% ≥ 50%，占 b1
+  });
+
+  it('none 模式保留 4 档电量', () => {
+    const [, v] = encodeStatus({ ...DEFAULT_STATUS, activation: 'on', activationBit: 'none' });
+    expect(v & 0x03).toBe(2); // 62% → 档 2
   });
 });
 

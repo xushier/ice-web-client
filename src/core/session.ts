@@ -409,6 +409,8 @@ export class ModuleSession {
       controlMode: this.cfg.telemetry.controlMode,
       networkError: this.cfg.telemetry.networkError,
       batteryPercent: this.cfg.telemetry.batteryPercent,
+      activation: (st.activation as 'on' | 'off') ?? 'off',
+      activationBit: this.deps.server().activationStatusBit,
     });
     this.sendFrame(FT.DI, data);
   }

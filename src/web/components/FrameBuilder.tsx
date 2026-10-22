@@ -28,6 +28,7 @@ const TYPES: Array<{ value: number; label: string; dataLen: number }> = [
 
 export default function FrameBuilder({ open, onClose }: { open: boolean; onClose: () => void }) {
   const modules = useStore((s) => s.state?.modules) ?? [];
+  const server = useStore((s) => s.state?.server);
   const run = useStore((s) => s.run);
   const toast = useStore((s) => s.toast);
 
@@ -122,6 +123,8 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
       controlMode: m.telemetry.controlMode,
       networkError: m.telemetry.networkError,
       batteryPercent: m.telemetry.batteryPercent,
+      activation: (m.states.activation as 'on' | 'off') ?? 'off',
+      activationBit: server?.activationStatusBit ?? 'b1',
     });
     const set = new Set<string>();
     for (const byteIdx of [0, 1]) {

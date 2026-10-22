@@ -67,6 +67,8 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
       controlMode: m.telemetry.controlMode,
       networkError: m.telemetry.networkError,
       batteryPercent: m.telemetry.batteryPercent,
+      activation: (st.activation as 'on' | 'off') ?? 'off',
+      activationBit: server?.activationStatusBit ?? 'b1',
     });
     const hex = toHexUpper(encodeFrame({ id: m.moduleId, type: 0x10, data }));
     void navigator.clipboard.writeText(hex).then(

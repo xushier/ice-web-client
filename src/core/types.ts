@@ -1,4 +1,4 @@
-import type { CommandKind } from '../protocol/bits';
+import type { ActivationStatusBit, CommandKind } from '../protocol/bits';
 import type { ParsedFrame } from '../protocol/describe';
 
 export interface ServerConfig {
@@ -17,6 +17,8 @@ export interface ServerConfig {
   autoParallel: boolean;
   /** 收到 0x00 后立即回 0x01 */
   ackCommand: boolean;
+  /** 0x10 里活化状态占用的位：b1（默认，与命令帧同位）/ b0 / none（不上报，保留 4 档电量） */
+  activationStatusBit: ActivationStatusBit;
 }
 
 export const DEFAULT_SERVER: ServerConfig = {
@@ -33,6 +35,7 @@ export const DEFAULT_SERVER: ServerConfig = {
   autoJitterMs: 0,
   autoParallel: false,
   ackCommand: true,
+  activationStatusBit: 'b1',
 };
 
 export interface Telemetry {

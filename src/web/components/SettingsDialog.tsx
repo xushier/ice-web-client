@@ -117,7 +117,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
 
         <section>
           <h3 className="mb-2 text-[11px] font-medium text-slate-500">上报节奏</h3>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Field label="0x10 周期 (秒)">
               <Input
                 value={draft.statusIntervalSec}
@@ -136,6 +136,19 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
               <div className="pt-2">
                 <Switch checked={draft.ackCommand} onChange={(v) => set('ackCommand', v)} label="收到 0x00 立即应答" />
               </div>
+            </Field>
+            <Field
+              label="0x10 活化状态位"
+              hint="协议未定义活化状态位。默认 b1 与命令帧同位；选 none 则恢复 4 档电量。"
+            >
+              <Select
+                value={draft.activationStatusBit}
+                onChange={(e) => set('activationStatusBit', e.target.value as 'b1' | 'b0' | 'none')}
+              >
+                <option value="b1">低字节 b1（默认）</option>
+                <option value="b0">低字节 b0</option>
+                <option value="none">不上报（保留 4 档电量）</option>
+              </Select>
             </Field>
           </div>
         </section>

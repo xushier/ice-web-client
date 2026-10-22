@@ -179,6 +179,8 @@ async function main() {
   await sleep(300);
   let st = await req('GET', '/api/state');
   assert(st.modules.find((x) => x.id === mod.id).states.activation === 'on', '活化应能置开');
+  const actDi = [...received].reverse().find((f) => f.type === 0x10);
+  assert(actDi.data[1] & 0x02, '活化开应在 0x10 低字节 b1 置 1');
   terminal.write(build(MODULE_ID, 0x00, [0x00, 0x02]));
   await sleep(300);
   st = await req('GET', '/api/state');

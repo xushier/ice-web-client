@@ -135,7 +135,18 @@ export interface StatusSnapshot {
   controlMode: ControlMode;
   networkError: boolean;
   batteryPercent: number;
+  /** 电池活化状态（0x10 里没有官方定义位，按下面的映射位上报） */
+  activation?: ActivationState;
+  /**
+   * 活化状态占用哪一位：
+   *  - 'b1'（默认）：低字节 b1，与命令帧的活化位（E1，数据区 0x0002）同位；此时电量档只剩 b0 一位
+   *  - 'b0'：低字节 b0，电量档用 b1
+   *  - 'none'：不上报活化，低字节 b1~b0 按协议做 4 档电量
+   */
+  activationBit?: ActivationStatusBit;
 }
+
+export type ActivationStatusBit = 'b1' | 'b0' | 'none';
 
 export interface StatusBitDef {
   byte: 0 | 1;
@@ -190,7 +201,19 @@ export function encodeStatus(s: StatusSnapshot): Uint8Array {
   if (p2 === 'open') b1 |= 0x08;
 
   if (s.controlMode === 'local') b1 |= 0x04;
-  b1 |= coarseBattery(s.batteryPercent) & 0x03;
+
+  const coarse = coarseBattery(s.batteryPercent);
+  const actOn = s.activation === 'on';
+  const actBit = s.activationBit ?? 'b1';
+  if (actBit === 'b1') {
+    if (actOn) b1 |= 0x02;
+    if (coarse >= 2) b1 |= 0x01;
+  } else if (actBit === 'b0') {
+    if (actOn) b1 |= 0x01;
+    if (coarse >= 2) b1 |= 0x02;
+  } else {
+    b1 |= coarse & 0x03;
+  }
   return Uint8Array.from([b0, b1]);
 }
 
