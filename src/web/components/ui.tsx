@@ -140,6 +140,119 @@ export function Badge({
   );
 }
 
+export type Tone = 'slate' | 'emerald' | 'amber' | 'rose' | 'blue';
+
+const TONE_SURFACE: Record<Tone, string> = {
+  slate: 'border-slate-200 bg-slate-50',
+  emerald: 'border-emerald-200 bg-emerald-50',
+  amber: 'border-amber-200 bg-amber-50',
+  rose: 'border-rose-200 bg-rose-50',
+  blue: 'border-blue-200 bg-blue-50',
+};
+
+const TONE_TEXT: Record<Tone, string> = {
+  slate: 'text-slate-700',
+  emerald: 'text-emerald-700',
+  amber: 'text-amber-700',
+  rose: 'text-rose-700',
+  blue: 'text-blue-700',
+};
+
+const TONE_BAR: Record<Tone, string> = {
+  slate: 'bg-slate-400',
+  emerald: 'bg-emerald-500',
+  amber: 'bg-amber-500',
+  rose: 'bg-rose-500',
+  blue: 'bg-blue-500',
+};
+
+/** 指标卡：标签 + 大号等宽数值 + 单位，可带进度条 */
+export function Stat({
+  label,
+  value,
+  unit,
+  tone = 'slate',
+  ratio,
+  hint,
+}: {
+  label: string;
+  value: string | number;
+  unit?: string;
+  tone?: Tone;
+  ratio?: number;
+  hint?: string;
+}) {
+  return (
+    <div className={cn('min-w-0 rounded-lg border px-1.5 py-1', TONE_SURFACE[tone])}>
+      <div className="truncate text-[10px] leading-3 text-slate-500">{label}</div>
+      <div className={cn('mt-0.5 flex items-baseline gap-0.5', TONE_TEXT[tone])}>
+        <span className="font-mono text-[13px] font-medium leading-4">{value}</span>
+        {unit ? <span className="text-[10px] opacity-70">{unit}</span> : null}
+      </div>
+      {typeof ratio === 'number' ? (
+        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-white/70">
+          <div
+            className={cn('h-full rounded-full transition-all', TONE_BAR[tone])}
+            style={{ width: `${Math.max(0, Math.min(100, ratio))}%` }}
+          />
+        </div>
+      ) : null}
+      {hint ? <div className="mt-0.5 truncate text-[9px] text-slate-400">{hint}</div> : null}
+    </div>
+  );
+}
+
+/** 状态胶囊：小圆点 + 文案，用于在线/离线/模式等枚举值 */
+export function StatusPill({
+  tone = 'slate',
+  children,
+  dot = true,
+}: {
+  tone?: Tone;
+  children: ReactNode;
+  dot?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-[1px] text-[10px] font-medium',
+        TONE_SURFACE[tone],
+        TONE_TEXT[tone],
+      )}
+    >
+      {dot ? <span className={cn('size-1.5 rounded-full', TONE_BAR[tone])} /> : null}
+      {children}
+    </span>
+  );
+}
+
+/** 收发计数胶囊 */
+export function CounterChip({
+  label,
+  value,
+  icon,
+  tone = 'slate',
+}: {
+  label: string;
+  value: number;
+  icon?: ReactNode;
+  tone?: Tone;
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] font-mono text-[10px]',
+        TONE_SURFACE[tone],
+        TONE_TEXT[tone],
+      )}
+    >
+      {icon}
+      <span className="text-slate-500">{label}</span>
+      <span className="font-medium">{value}</span>
+    </span>
+  );
+}
+
 export function Dialog({
   open,
   onClose,

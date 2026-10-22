@@ -8,8 +8,6 @@ import {
   Send,
   Settings2,
   Terminal,
-  Wifi,
-  WifiOff,
 } from 'lucide-react';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
@@ -18,7 +16,7 @@ import NewModuleDialog from '@/web/components/NewModuleDialog';
 import SettingsDialog from '@/web/components/SettingsDialog';
 import FramePanel from '@/web/components/FramePanel';
 import FrameBuilder from '@/web/components/FrameBuilder';
-import { Badge, Button, cn } from '@/web/components/ui';
+import { Badge, Button, StatusPill, cn } from '@/web/components/ui';
 
 const LINK_DOT: Record<string, string> = {
   online: 'bg-emerald-500',
@@ -32,6 +30,13 @@ const LINK_TEXT: Record<string, string> = {
   connecting: '连接中',
   offline: '离线',
   idle: '未连接',
+};
+
+const LINK_TONE: Record<string, string> = {
+  online: 'text-emerald-600',
+  connecting: 'text-amber-600',
+  offline: 'text-rose-600',
+  idle: 'text-slate-400',
 };
 
 export default function App() {
@@ -87,22 +92,17 @@ export default function App() {
           {server?.host ? `${server.host}:${server.port}` : '未配置服务器'}
         </button>
 
-        <div className="hidden shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-slate-500 lg:flex">
+        <div className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-slate-500 lg:flex">
           {ws === 'open' ? (
-            <>
-              <Wifi className="size-3 text-emerald-500" />
-              实时通道正常
-            </>
+            <StatusPill tone="emerald">实时通道正常</StatusPill>
           ) : (
-            <>
-              <WifiOff className="size-3 text-rose-500" />
-              {ws === 'connecting' ? '连接中…' : '通道断开，重试中'}
-            </>
+            <StatusPill tone={ws === 'connecting' ? 'amber' : 'rose'}>
+              {ws === 'connecting' ? '通道连接中' : '通道断开'}
+            </StatusPill>
           )}
-          <span className="mx-1 text-slate-300">|</span>
-          <span>
-            在线 <b className="font-medium text-slate-700">{online}</b>/{modules.length}
-          </span>
+          <StatusPill tone={online > 0 ? 'emerald' : 'slate'} dot={false}>
+            在线 <b className="font-mono font-medium">{online}</b>/{modules.length}
+          </StatusPill>
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -194,8 +194,9 @@ export default function App() {
                   {collapsed ? null : (
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[11px] text-slate-700">{m.towerName}</span>
-                      <span className="block text-[10px] text-slate-400">
-                        #{m.moduleId} · {LINK_TEXT[m.link]}
+                      <span className="mt-0.5 flex items-center gap-1">
+                        <span className="font-mono text-[10px] text-slate-400">#{m.moduleId}</span>
+                        <span className={cn('text-[10px]', LINK_TONE[m.link])}>{LINK_TEXT[m.link]}</span>
                       </span>
                     </span>
                   )}

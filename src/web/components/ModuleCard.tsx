@@ -1,19 +1,38 @@
 import { useState } from 'react';
-import { Copy, GripVertical, Pencil, Power, RefreshCw, Send, Trash2, Zap } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  GripVertical,
+  Pencil,
+  Power,
+  RefreshCw,
+  Send,
+  Trash2,
+  Zap,
+} from 'lucide-react';
 import type { ModuleSnapshot, Telemetry } from '@/core/types';
 import { deviceButtons, deviceMeta, hasStatusBit } from '@/core/types';
 import { KIND_LABEL, encodeStatus, type DeviceState } from '@/protocol/bits';
 import { encodeFrame, toHexUpper } from '@/protocol/frame';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
-import { Badge, Button, Input, Select, Switch, cn } from './ui';
+import { Badge, Button, CounterChip, Input, Select, Stat, StatusPill, Switch, cn, type Tone } from './ui';
 
-const LINK_STYLE: Record<ModuleSnapshot['link'], { dot: string; text: string; label: string }> = {
-  online: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: '在线' },
-  connecting: { dot: 'bg-amber-500', text: 'text-amber-600', label: '连接中' },
-  offline: { dot: 'bg-rose-500', text: 'text-rose-600', label: '离线' },
-  idle: { dot: 'bg-slate-300', text: 'text-slate-500', label: '未连接' },
+const LINK_STYLE: Record<ModuleSnapshot['link'], { dot: string; tone: Tone; label: string }> = {
+  online: { dot: 'bg-emerald-500', tone: 'emerald', label: '在线' },
+  connecting: { dot: 'bg-amber-500', tone: 'amber', label: '连接中' },
+  offline: { dot: 'bg-rose-500', tone: 'rose', label: '离线' },
+  idle: { dot: 'bg-slate-300', tone: 'slate', label: '未连接' },
 };
+
+function relTime(ts: number | null): string {
+  if (!ts) return '';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s 前`;
+  if (s < 3600) return `${Math.floor(s / 60)}m 前`;
+  return `${Math.floor(s / 3600)}h 前`;
+}
 
 const TONE_ACTIVE: Record<string, string> = {
   initial: 'border-emerald-500 bg-emerald-500 text-white shadow-sm',
@@ -73,50 +92,56 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
 
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-start gap-2 border-b border-slate-100 px-3 py-2.5">
-        <span className={cn('mt-1 size-2 shrink-0 rounded-full', link.dot)} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-[13px] font-medium text-slate-800">{m.towerName}</span>
-            <Badge>#{m.moduleId}</Badge>
-            <Badge tone={m.moduleId & 1 ? 'blue' : 'slate'}>{m.moduleId & 1 ? '大号侧' : '小号侧'}</Badge>
-            {autoOn ? <Badge tone="amber">自动</Badge> : null}
+      <div className="border-b border-slate-100 px-3 py-2.5">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-[13px] font-medium text-slate-800">{m.towerName}</span>
+              <Badge className="font-mono">#{m.moduleId}</Badge>
+              <Badge tone={m.moduleId & 1 ? 'blue' : 'slate'}>{m.moduleId & 1 ? '大号侧' : '小号侧'}</Badge>
+              {autoOn ? <Badge tone="amber">自动</Badge> : null}
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
+              <StatusPill tone={link.tone}>{link.label}</StatusPill>
+              <CounterChip label="收" value={m.rxCount} icon={<ArrowDown className="size-2.5" />} tone="emerald" />
+              <CounterChip label="发" value={m.txCount} icon={<ArrowUp className="size-2.5" />} tone="blue" />
+              {m.telemetry.networkError ? <StatusPill tone="rose">网络错误</StatusPill> : null}
+              <span className="text-[10px] text-slate-400">{m.lastRx ? relTime(m.lastRx) : '尚未收帧'}</span>
+            </div>
+            {m.error ? (
+              <div className="mt-1 rounded-md border border-rose-200 bg-rose-50 px-1.5 py-1 text-[10px] leading-tight text-rose-700">
+                {m.error}
+              </div>
+            ) : null}
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-slate-400">
-            <span className={link.text}>{link.label}</span>
-            <span>收 {m.rxCount}</span>
-            <span>发 {m.txCount}</span>
-            {m.lastRx ? <span>最后收包 {new Date(m.lastRx).toLocaleTimeString('zh-CN', { hour12: false })}</span> : null}
-            {m.error ? <span className="text-rose-500">{m.error}</span> : null}
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              title="重连"
+              className="rounded p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
+              onClick={() => void run(() => api.link(m.id, 'reconnect'))}
+            >
+              <RefreshCw className="size-3.5" />
+            </button>
+            <button
+              title={m.link === 'online' ? '断开' : '连接'}
+              className={cn(
+                'rounded p-1.5 transition-colors hover:bg-slate-100 active:bg-slate-200',
+                m.link === 'online' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-700',
+              )}
+              onClick={() => void run(() => api.link(m.id, m.link === 'online' ? 'disconnect' : 'connect'))}
+            >
+              <Power className="size-3.5" />
+            </button>
+            <button
+              title="删除模块"
+              className="rounded p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 active:bg-rose-100"
+              onClick={() => {
+                if (confirm(`删除模块「${m.towerName} #${m.moduleId}」？`)) void run(() => api.deleteModule(m.id));
+              }}
+            >
+              <Trash2 className="size-3.5" />
+            </button>
           </div>
-        </div>
-        <div className="flex items-center gap-0.5">
-          <button
-            title="重连"
-            className="rounded p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
-            onClick={() => void run(() => api.link(m.id, 'reconnect'))}
-          >
-            <RefreshCw className="size-3.5" />
-          </button>
-          <button
-            title={m.link === 'online' ? '断开' : '连接'}
-            className={cn(
-              'rounded p-1.5 transition-colors hover:bg-slate-100 active:bg-slate-200',
-              m.link === 'online' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-700',
-            )}
-            onClick={() => void run(() => api.link(m.id, m.link === 'online' ? 'disconnect' : 'connect'))}
-          >
-            <Power className="size-3.5" />
-          </button>
-          <button
-            title="删除模块"
-            className="rounded p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 active:bg-rose-100"
-            onClick={() => {
-              if (confirm(`删除模块「${m.towerName} #${m.moduleId}」？`)) void run(() => api.deleteModule(m.id));
-            }}
-          >
-            <Trash2 className="size-3.5" />
-          </button>
         </div>
       </div>
 
@@ -185,27 +210,43 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
 
       <DeviceList m={m} />
 
-      <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
-          <span>
-            电池 <b className="font-medium text-slate-700">{m.telemetry.batteryVoltage.toFixed(1)}V</b> /{' '}
-            {Math.round(m.telemetry.batteryPercent)}%
-          </span>
-          <span>
-            光伏 <b className="font-medium text-slate-700">{m.telemetry.pvVoltage.toFixed(1)}V</b>
-          </span>
-          <span className={m.telemetry.controlMode === 'local' ? 'text-amber-600' : ''}>
-            {m.telemetry.controlMode === 'local' ? '本地' : '远程'}
-          </span>
-          {m.telemetry.networkError ? <span className="text-rose-600">网络错误</span> : null}
-          <button
-            className="inline-flex items-center gap-0.5 rounded px-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
-            onClick={openTel}
-          >
-            <Pencil className="size-3" />
-            编辑
-          </button>
-        </div>
+      <div className="grid grid-cols-4 gap-1.5 border-t border-slate-100 px-3 pt-2">
+        <Stat
+          label="电池电压"
+          value={m.telemetry.batteryVoltage.toFixed(1)}
+          unit="V"
+          tone="emerald"
+          hint={`负载 ${m.telemetry.loadVoltage.toFixed(1)}V`}
+        />
+        <Stat
+          label="电池电量"
+          value={Math.round(m.telemetry.batteryPercent)}
+          unit="%"
+          tone={m.telemetry.batteryPercent >= 60 ? 'emerald' : m.telemetry.batteryPercent >= 30 ? 'amber' : 'rose'}
+          ratio={m.telemetry.batteryPercent}
+        />
+        <Stat
+          label="光伏电压"
+          value={m.telemetry.pvVoltage.toFixed(1)}
+          unit="V"
+          tone="blue"
+          hint={`充电 ${m.telemetry.pvCurrent.toFixed(2)}A`}
+        />
+        <Stat
+          label="控制模式"
+          value={m.telemetry.controlMode === 'local' ? '本地' : '远程'}
+          tone={m.telemetry.controlMode === 'local' ? 'amber' : 'slate'}
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
+        <button
+          className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
+          onClick={openTel}
+        >
+          <Pencil className="size-3" />
+          遥测
+        </button>
         <div className="flex items-center gap-1">
           <Button size="xs" variant="subtle" disabled={busy} onClick={() => void run(() => doReport(false))}>
             <Send className="size-3" />
