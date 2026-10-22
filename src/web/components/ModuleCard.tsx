@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Copy, GripVertical, Pencil, Power, RefreshCw, Send, Trash2, Zap } from 'lucide-react';
 import type { ModuleSnapshot, Telemetry } from '@/core/types';
-import { deviceMeta, deviceStates, reportsInStatus } from '@/core/types';
-import { KIND_LABEL, encodeStatus } from '@/protocol/bits';
+import { deviceButtons, deviceMeta, hasStatusBit } from '@/core/types';
+import { KIND_LABEL, encodeStatus, type DeviceState } from '@/protocol/bits';
 import { encodeFrame, toHexUpper } from '@/protocol/frame';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
@@ -15,32 +15,43 @@ const LINK_STYLE: Record<ModuleSnapshot['link'], { dot: string; text: string; la
   idle: { dot: 'bg-slate-300', text: 'text-slate-500', label: '未连接' },
 };
 
+const TONE_ACTIVE: Record<string, string> = {
+  initial: 'border-emerald-500 bg-emerald-500 text-white shadow-sm',
+  moving: 'border-amber-500 bg-amber-500 text-white shadow-sm',
+  melt: 'border-rose-500 bg-rose-500 text-white shadow-sm',
+};
+
+const TONE_IDLE: Record<string, string> = {
+  initial: 'border-slate-200 bg-white text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50',
+  moving: 'border-slate-200 bg-white text-amber-700 hover:border-amber-300 hover:bg-amber-50',
+  melt: 'border-slate-200 bg-white text-rose-700 hover:border-rose-300 hover:bg-rose-50',
+};
+
 export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
   const server = useStore((s) => s.state?.server);
   const run = useStore((s) => s.run);
   const toast = useStore((s) => s.toast);
   const [editTel, setEditTel] = useState(false);
   const [draft, setDraft] = useState<Telemetry>(m.telemetry);
+  const [busy, setBusy] = useState(false);
 
   const autoOn = m.autoMode === 'on' || (m.autoMode === 'inherit' && !!server?.autoModeDefault);
   const link = LINK_STYLE[m.link];
 
   const copyStatusFrame = () => {
+    const st = m.states;
     const data = encodeStatus({
-      ground: (m.states.ground as 'open' | 'closed') ?? 'closed',
-      ice: (m.states.ice as 'open' | 'closed') ?? 'open',
-      lock: (m.states.lock as 'locked' | 'unlocked') ?? 'locked',
-      phases: [
-        (m.states.phase1 as 'open' | 'closed') ?? 'closed',
-        (m.states.phase2 as 'open' | 'closed') ?? 'closed',
-      ],
+      ground: (st.ground as DeviceState) ?? 'closed',
+      ice: (st.ice as DeviceState) ?? 'open',
+      lock: (st.lock as DeviceState) ?? 'locked',
+      phases: [(st.phase1 as DeviceState) ?? 'open', (st.phase2 as DeviceState) ?? 'open'],
       controlMode: m.telemetry.controlMode,
       networkError: m.telemetry.networkError,
       batteryPercent: m.telemetry.batteryPercent,
     });
     const hex = toHexUpper(encodeFrame({ id: m.moduleId, type: 0x10, data }));
     void navigator.clipboard.writeText(hex).then(
-      () => toast('已复制 0x10 状态帧'),
+      () => toast('已复制当前 0x10 帧'),
       () => toast('复制失败，浏览器未授权剪贴板', 'error'),
     );
   };
@@ -48,6 +59,16 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
   const openTel = () => {
     setDraft(m.telemetry);
     setEditTel(true);
+  };
+
+  const doReport = async (includePower: boolean) => {
+    setBusy(true);
+    try {
+      await api.report(m.id, includePower);
+      toast(includePower ? '已发送 0x10 + 0x20' : '已发送 0x10 状态帧');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -72,7 +93,7 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
         <div className="flex items-center gap-0.5">
           <button
             title="重连"
-            className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="rounded p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
             onClick={() => void run(() => api.link(m.id, 'reconnect'))}
           >
             <RefreshCw className="size-3.5" />
@@ -80,7 +101,7 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
           <button
             title={m.link === 'online' ? '断开' : '连接'}
             className={cn(
-              'rounded p-1.5 hover:bg-slate-100',
+              'rounded p-1.5 transition-colors hover:bg-slate-100 active:bg-slate-200',
               m.link === 'online' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-700',
             )}
             onClick={() => void run(() => api.link(m.id, m.link === 'online' ? 'disconnect' : 'connect'))}
@@ -89,7 +110,7 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
           </button>
           <button
             title="删除模块"
-            className="rounded p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+            className="rounded p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 active:bg-rose-100"
             onClick={() => {
               if (confirm(`删除模块「${m.towerName} #${m.moduleId}」？`)) void run(() => api.deleteModule(m.id));
             }}
@@ -113,7 +134,16 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
                   {deviceMeta(p.key).name} → {KIND_LABEL[p.kind]}
                   {p.conflict ? <span className="ml-1 text-rose-600">（冲突位，需人工判断）</span> : null}
                 </span>
-                <Button size="xs" variant="primary" onClick={() => void run(() => api.pending(m.id, p.id, 'confirm'))}>
+                <Button
+                  size="xs"
+                  variant="primary"
+                  onClick={() =>
+                    void run(async () => {
+                      await api.pending(m.id, p.id, 'confirm');
+                      toast(`${deviceMeta(p.key).name} 已到位`);
+                    })
+                  }
+                >
                   已到位
                 </Button>
                 <Button size="xs" variant="ghost" onClick={() => void run(() => api.pending(m.id, p.id, 'dismiss'))}>
@@ -124,6 +154,34 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
           </div>
         </div>
       ) : null}
+
+      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-3 py-1">
+        <span className="text-[10px] text-slate-400">状态：左=初始态 · 中=动作中 · 右=融冰态</span>
+        <div className="flex items-center gap-1">
+          <button
+            className="rounded px-1.5 py-0.5 text-[10px] text-emerald-700 transition-colors hover:bg-emerald-50 active:bg-emerald-100"
+            onClick={() =>
+              void run(async () => {
+                await api.preset(m.id, 'initial');
+                toast('已切换到初始态');
+              })
+            }
+          >
+            一键初始态
+          </button>
+          <button
+            className="rounded px-1.5 py-0.5 text-[10px] text-rose-700 transition-colors hover:bg-rose-50 active:bg-rose-100"
+            onClick={() =>
+              void run(async () => {
+                await api.preset(m.id, 'melt');
+                toast('已切换到融冰态');
+              })
+            }
+          >
+            一键融冰态
+          </button>
+        </div>
+      </div>
 
       <DeviceList m={m} />
 
@@ -140,17 +198,20 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
             {m.telemetry.controlMode === 'local' ? '本地' : '远程'}
           </span>
           {m.telemetry.networkError ? <span className="text-rose-600">网络错误</span> : null}
-          <button className="inline-flex items-center gap-0.5 text-slate-400 hover:text-slate-700" onClick={openTel}>
+          <button
+            className="inline-flex items-center gap-0.5 rounded px-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
+            onClick={openTel}
+          >
             <Pencil className="size-3" />
             编辑
           </button>
         </div>
         <div className="flex items-center gap-1">
-          <Button size="xs" variant="subtle" onClick={() => void run(() => api.report(m.id, false))}>
+          <Button size="xs" variant="subtle" disabled={busy} onClick={() => void run(() => doReport(false))}>
             <Send className="size-3" />
             上报
           </Button>
-          <Button size="xs" variant="ghost" title="发送 0x20 供电帧" onClick={() => void run(() => api.report(m.id, true))}>
+          <Button size="xs" variant="ghost" disabled={busy} title="发送 0x20 供电帧" onClick={() => void run(() => doReport(true))}>
             供电
           </Button>
           <Button size="xs" variant="ghost" title="复制当前 0x10 帧" onClick={copyStatusFrame}>
@@ -251,6 +312,7 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
                 void run(async () => {
                   await api.telemetry(m.id, draft);
                   setEditTel(false);
+                  toast('遥测已保存并上报');
                 });
               }}
             >
@@ -327,10 +389,10 @@ function DeviceRow({
 }) {
   const run = useStore((s) => s.run);
   const meta = deviceMeta(deviceKey);
-  const states = deviceStates(deviceKey);
-  const pending = m.pending.filter((p) => p.key === deviceKey);
   const current = m.states[deviceKey];
-  const supported = reportsInStatus(deviceKey);
+  const buttons = deviceButtons(deviceKey, current);
+  const pending = m.pending.filter((p) => p.key === deviceKey);
+  const showNoBitTip = !hasStatusBit(deviceKey) && deviceKey.startsWith('phase');
 
   return (
     <div
@@ -362,29 +424,31 @@ function DeviceRow({
       >
         <GripVertical className="size-3.5" />
       </span>
-      <span className="w-20 shrink-0 truncate text-[11px] text-slate-600">{meta.name}</span>
-      <div className="flex flex-1 items-center gap-1">
-        {states.map((s) => {
-          const active = current === s.value;
-          const isPendingTarget = pending.some((p) => p.target === s.value);
+      <span className="w-[72px] shrink-0 truncate text-[11px] text-slate-600">{meta.name}</span>
+      <div className="grid flex-1 grid-cols-3 gap-1">
+        {buttons.map((b) => {
+          const active = current === b.value;
+          const isPending = pending.some((p) => p.target === b.value);
           return (
             <button
-              key={s.value}
-              onClick={() => void run(() => api.setDevice(m.id, deviceKey, s.value))}
+              key={b.value}
+              onClick={() => void run(() => api.setDevice(m.id, deviceKey, b.value))}
               className={cn(
-                'rounded-md border px-2 py-1 text-[11px] transition-colors',
-                active
-                  ? 'border-emerald-500 bg-emerald-500 text-white'
-                  : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700',
-                isPendingTarget && 'pending-ring border-amber-400 text-amber-700',
+                'rounded-md border px-1 py-1 text-[11px] transition-all active:scale-[0.97]',
+                active ? TONE_ACTIVE[b.tone] : TONE_IDLE[b.tone],
+                isPending && 'pending-ring ring-2 ring-amber-400',
               )}
             >
-              {s.label}
+              {b.label}
             </button>
           );
         })}
       </div>
-      {!supported ? <span className="text-[10px] text-slate-300">不上报</span> : null}
+      {showNoBitTip ? (
+        <span className="shrink-0 text-[10px] text-slate-300" title="协议只定义了选相刀闸 1、2 的 DI 位，这一个不参与 0x10 上报">
+          无位
+        </span>
+      ) : null}
     </div>
   );
 }

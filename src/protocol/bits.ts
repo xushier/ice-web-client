@@ -4,23 +4,49 @@
  * 重要：命令帧（0x00）与状态帧（0x10）的位布局**不一致**，必须分开维护。
  *   接地刀闸：命令帧 Byte1 b7/b6；状态帧 Byte0 b0（合）+ Byte1 b7（分）
  *   融冰锁  ：命令帧 Byte0 b1/b0；状态帧 Byte0 b2（闭锁）/b1（开锁）
+ *
+ * 数据区为 16 位字，高字节先发；《融冰指令生成器》里按 bit 号给出的 flag 与下表一致：
+ *   接地合 bit7(Byte0) / 接地分 bit6(Byte1) / 选相1合 b5 / 选相1分 b4 / 选相2合 b3 / 选相2分 b2
+ *   融冰合 Byte0 b3 / 融冰分 Byte0 b2 / 闭锁 Byte0 b1 / 开锁 Byte0 b0 / 活化(泄放) Byte1 b1
  */
 
-export type SwitchState = 'open' | 'closed';
+export type SwitchState = 'closed' | 'open';
 export type LockState = 'locked' | 'unlocked';
 export type ActivationState = 'off' | 'on';
 export type ControlMode = 'remote' | 'local';
-export type DeviceSlot = 'ground' | 'ice' | 'lock' | 'phase1' | 'phase2' | 'discharge';
-export type CommandKind = 'close' | 'open' | 'lock' | 'unlock';
+export type DeviceSlot = 'ground' | 'ice' | 'lock' | 'phase1' | 'phase2' | 'activation';
+export type CommandKind = 'close' | 'open' | 'lock' | 'unlock' | 'on' | 'off';
 
-export const SWITCH_LABEL: Record<SwitchState, string> = {
+/** 设备状态：到位 / 到位 / 动作中（动作中在 DI 帧里两位都为 0） */
+export type DeviceState =
+  | 'closed'
+  | 'open'
+  | 'closing'
+  | 'opening'
+  | 'locked'
+  | 'unlocked'
+  | 'locking'
+  | 'unlocking'
+  | 'on'
+  | 'off';
+
+export const SWITCH_LABEL: Record<string, string> = {
   closed: '合闸到位',
   open: '分闸到位',
+  closing: '合闸中',
+  opening: '分闸中',
 };
 
-export const LOCK_LABEL: Record<LockState, string> = {
+export const LOCK_LABEL: Record<string, string> = {
   locked: '闭锁到位',
   unlocked: '开锁到位',
+  locking: '闭锁中',
+  unlocking: '开锁中',
+};
+
+export const ACT_LABEL: Record<string, string> = {
+  off: '活化关闭',
+  on: '活化开启',
 };
 
 export const KIND_LABEL: Record<CommandKind, string> = {
@@ -28,6 +54,8 @@ export const KIND_LABEL: Record<CommandKind, string> = {
   open: '分闸',
   lock: '闭锁',
   unlock: '开锁',
+  on: '活化开',
+  off: '活化关',
 };
 
 /* ---------------------------------------------------------------- 0x00 命令帧 */
@@ -38,6 +66,8 @@ export interface CommandBitDef {
   slot: DeviceSlot | 'spare';
   kind: CommandKind | null;
   label: string;
+  /** 生成器里的标识，便于和现场文档对照 */
+  flag?: string;
 }
 
 export const COMMAND_BITS: CommandBitDef[] = [
@@ -45,17 +75,17 @@ export const COMMAND_BITS: CommandBitDef[] = [
   { byte: 0, bit: 6, slot: 'spare', kind: null, label: '保留 bh6' },
   { byte: 0, bit: 5, slot: 'spare', kind: null, label: '保留 bh5' },
   { byte: 0, bit: 4, slot: 'spare', kind: null, label: '保留 bh4' },
-  { byte: 0, bit: 3, slot: 'ice', kind: 'close', label: '融冰刀闸 合闸' },
-  { byte: 0, bit: 2, slot: 'ice', kind: 'open', label: '融冰刀闸 分闸' },
-  { byte: 0, bit: 1, slot: 'lock', kind: 'lock', label: '融冰锁 闭锁' },
-  { byte: 0, bit: 0, slot: 'lock', kind: 'unlock', label: '融冰锁 开锁' },
-  { byte: 1, bit: 7, slot: 'ground', kind: 'close', label: '接地刀闸 合闸' },
-  { byte: 1, bit: 6, slot: 'ground', kind: 'open', label: '接地刀闸 分闸' },
-  { byte: 1, bit: 5, slot: 'phase1', kind: 'close', label: '选相刀闸 1 合闸' },
-  { byte: 1, bit: 4, slot: 'phase1', kind: 'open', label: '选相刀闸 1 分闸' },
-  { byte: 1, bit: 3, slot: 'phase2', kind: 'close', label: '选相刀闸 2 合闸' },
-  { byte: 1, bit: 2, slot: 'phase2', kind: 'open', label: '选相刀闸 2 分闸' },
-  { byte: 1, bit: 1, slot: 'discharge', kind: null, label: '泄放电阻（备用）' },
+  { byte: 0, bit: 3, slot: 'ice', kind: 'close', label: '融冰刀闸 合闸', flag: 'C1' },
+  { byte: 0, bit: 2, slot: 'ice', kind: 'open', label: '融冰刀闸 分闸', flag: 'C2' },
+  { byte: 0, bit: 1, slot: 'lock', kind: 'lock', label: '融冰锁 闭锁', flag: 'D1' },
+  { byte: 0, bit: 0, slot: 'lock', kind: 'unlock', label: '融冰锁 开锁', flag: 'D2' },
+  { byte: 1, bit: 7, slot: 'ground', kind: 'close', label: '接地刀闸 合闸', flag: 'A1' },
+  { byte: 1, bit: 6, slot: 'ground', kind: 'open', label: '接地刀闸 分闸', flag: 'A2' },
+  { byte: 1, bit: 5, slot: 'phase1', kind: 'close', label: '选相刀闸 1 合闸', flag: 'B1' },
+  { byte: 1, bit: 4, slot: 'phase1', kind: 'open', label: '选相刀闸 1 分闸', flag: 'B2' },
+  { byte: 1, bit: 3, slot: 'phase2', kind: 'close', label: '选相刀闸 2 合闸', flag: 'B3' },
+  { byte: 1, bit: 2, slot: 'phase2', kind: 'open', label: '选相刀闸 2 分闸', flag: 'B4' },
+  { byte: 1, bit: 1, slot: 'activation', kind: 'on', label: '电池活化 开启（生成器 E1）', flag: 'E1' },
   { byte: 1, bit: 0, slot: 'spare', kind: null, label: '备用 bl0' },
 ];
 
@@ -65,7 +95,11 @@ export interface CommandAction {
   label: string;
 }
 
-export function decodeCommand(data: Uint8Array): { actions: CommandAction[]; reserved: number } {
+export function decodeCommand(data: Uint8Array): {
+  actions: CommandAction[];
+  reserved: number;
+  allZero: boolean;
+} {
   const b0 = data[0] ?? 0;
   const b1 = data[1] ?? 0;
   const actions: CommandAction[] = [];
@@ -76,7 +110,7 @@ export function decodeCommand(data: Uint8Array): { actions: CommandAction[]; res
       actions.push({ slot: def.slot, kind: def.kind, label: def.label });
     }
   }
-  return { actions, reserved: b0 & 0xf0 };
+  return { actions, reserved: b0 & 0xf0, allZero: b0 === 0 && b1 === 0 };
 }
 
 export function encodeCommand(actions: Array<{ slot: DeviceSlot; kind: CommandKind }>): Uint8Array {
@@ -94,10 +128,10 @@ export function encodeCommand(actions: Array<{ slot: DeviceSlot; kind: CommandKi
 /* ---------------------------------------------------------------- 0x10 状态帧 */
 
 export interface StatusSnapshot {
-  ground: SwitchState;
-  ice: SwitchState;
-  lock: LockState;
-  phases: SwitchState[];
+  ground: DeviceState;
+  ice: DeviceState;
+  lock: DeviceState;
+  phases: DeviceState[];
   controlMode: ControlMode;
   networkError: boolean;
   batteryPercent: number;
@@ -138,19 +172,23 @@ export function encodeStatus(s: StatusSnapshot): Uint8Array {
   let b0 = 0;
   let b1 = 0;
   if (s.ground === 'closed') b0 |= 0x01;
+  if (s.ground === 'open') b1 |= 0x80;
+
   if (s.lock === 'locked') b0 |= 0x04;
-  else b0 |= 0x02;
+  if (s.lock === 'unlocked') b0 |= 0x02;
+
   if (s.ice === 'open') b0 |= 0x08;
-  else b0 |= 0x10;
+  if (s.ice === 'closed') b0 |= 0x10;
+
   if (s.networkError) b0 |= 0x20;
 
-  if (s.ground === 'open') b1 |= 0x80;
   const p1 = s.phases[0];
   if (p1 === 'closed') b1 |= 0x40;
-  else if (p1 === 'open') b1 |= 0x20;
+  if (p1 === 'open') b1 |= 0x20;
   const p2 = s.phases[1];
   if (p2 === 'closed') b1 |= 0x10;
-  else if (p2 === 'open') b1 |= 0x08;
+  if (p2 === 'open') b1 |= 0x08;
+
   if (s.controlMode === 'local') b1 |= 0x04;
   b1 |= coarseBattery(s.batteryPercent) & 0x03;
   return Uint8Array.from([b0, b1]);
@@ -180,12 +218,12 @@ export function describeStatus(data: Uint8Array): string[] {
   const b0 = data[0] ?? 0;
   const b1 = data[1] ?? 0;
   const out: string[] = [];
-  out.push(b0 & 0x01 ? '接地刀闸合' : '接地刀闸非合位');
-  out.push(b1 & 0x80 ? '接地刀闸分' : '');
-  out.push(b0 & 0x10 ? '融冰刀闸合' : '');
-  out.push(b0 & 0x08 ? '融冰刀闸分' : '');
-  out.push(b0 & 0x04 ? '融冰锁闭锁' : '');
-  out.push(b0 & 0x02 ? '融冰锁开锁' : '');
+  if (b0 & 0x01) out.push('接地刀闸合');
+  if (b1 & 0x80) out.push('接地刀闸分');
+  if (b0 & 0x10) out.push('融冰刀闸合');
+  if (b0 & 0x08) out.push('融冰刀闸分');
+  if (b0 & 0x04) out.push('融冰锁闭锁');
+  if (b0 & 0x02) out.push('融冰锁开锁');
   if (b1 & 0x40) out.push('选相1合');
   if (b1 & 0x20) out.push('选相1分');
   if (b1 & 0x10) out.push('选相2合');
@@ -196,6 +234,7 @@ export function describeStatus(data: Uint8Array): string[] {
   return out.filter(Boolean);
 }
 
+/** 初始态（最左一列）：接地合、选相分、锁闭锁、融冰分、活化关 */
 export function defaultStates(phaseCount: number): Record<string, string> {
   const states: Record<string, string> = {
     ground: 'closed',
@@ -203,6 +242,6 @@ export function defaultStates(phaseCount: number): Record<string, string> {
     lock: 'locked',
     activation: 'off',
   };
-  for (let i = 1; i <= phaseCount; i++) states[`phase${i}`] = 'closed';
+  for (let i = 1; i <= phaseCount; i++) states[`phase${i}`] = 'open';
   return states;
 }

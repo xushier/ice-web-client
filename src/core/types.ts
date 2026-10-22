@@ -125,8 +125,8 @@ export function deviceStates(key: string): Array<{ value: string; label: string 
     ];
   if (kind === 'activation')
     return [
-      { value: 'off', label: '关' },
-      { value: 'on', label: '开' },
+      { value: 'off', label: '活化关闭' },
+      { value: 'on', label: '活化开启' },
     ];
   return [
     { value: 'closed', label: '合闸到位' },
@@ -134,8 +134,99 @@ export function deviceStates(key: string): Array<{ value: string; label: string 
   ];
 }
 
-/** 阶段 1/2 之外没有协议位，不参与 0x10 上报 */
-export function reportsInStatus(key: string): boolean {
+export type ButtonTone = 'initial' | 'moving' | 'melt';
+
+export interface DeviceButton {
+  value: string;
+  label: string;
+  tone: ButtonTone;
+}
+
+/**
+ * 三列按钮：左=初始态（绿）、中=动作中（橙）、右=融冰态（红）。
+ * 中间按钮的文案随当前状态变化：从左往右动 →「分闸中 / 开锁中」，从右往左动 →「合闸中 / 闭锁中」。
+ */
+export function deviceButtons(key: string, current: string | undefined): DeviceButton[] {
+  const kind = deviceMeta(key).kind;
+  const cur = current ?? '';
+
+  if (kind === 'activation') {
+    return [
+      { value: 'off', label: '活化关闭', tone: 'initial' },
+      { value: 'on', label: '活化开启', tone: 'melt' },
+    ];
+  }
+
+  if (kind === 'lock') {
+    const mid: DeviceButton =
+      cur === 'unlocked' || cur === 'locking'
+        ? { value: 'locking', label: '闭锁中', tone: 'moving' }
+        : { value: 'unlocking', label: '开锁中', tone: 'moving' };
+    return [
+      { value: 'locked', label: '闭锁到位', tone: 'initial' },
+      mid,
+      { value: 'unlocked', label: '开锁到位', tone: 'melt' },
+    ];
+  }
+
+  const leftIsClosed = kind === 'switch' && key === 'ground';
+  const mid: DeviceButton = leftIsClosed
+    ? cur === 'open' || cur === 'closing'
+      ? { value: 'closing', label: '合闸中', tone: 'moving' }
+      : { value: 'opening', label: '分闸中', tone: 'moving' }
+    : cur === 'closed' || cur === 'opening'
+      ? { value: 'opening', label: '分闸中', tone: 'moving' }
+      : { value: 'closing', label: '合闸中', tone: 'moving' };
+
+  return leftIsClosed
+    ? [
+        { value: 'closed', label: '合闸到位', tone: 'initial' },
+        mid,
+        { value: 'open', label: '分闸到位', tone: 'melt' },
+      ]
+    : [
+        { value: 'open', label: '分闸到位', tone: 'initial' },
+        mid,
+        { value: 'closed', label: '合闸到位', tone: 'melt' },
+      ];
+}
+
+/** 初始态（最左列）：接地合、选相分、锁闭锁、融冰分、活化关 */
+export const INITIAL_STATE: Record<string, string> = {
+  ground: 'closed',
+  ice: 'open',
+  lock: 'locked',
+  activation: 'off',
+};
+
+/** 融冰态（最右列）：接地分、选相合、锁开、融冰合 */
+export const MELT_STATE: Record<string, string> = {
+  ground: 'open',
+  ice: 'closed',
+  lock: 'unlocked',
+};
+
+/** 默认展示顺序：接地刀闸 → 选相刀闸(1..n) → 融冰锁 → 融冰刀闸 → 电池活化 */
+export function orderDevices(keys: string[]): string[] {
+  const rank = (key: string): number => {
+    if (key === 'ground') return 0;
+    if (key.startsWith('phase')) return 1;
+    if (key === 'lock') return 2;
+    if (key === 'ice') return 3;
+    if (key === 'activation') return 4;
+    return 5;
+  };
+  return [...keys].sort((a, b) => {
+    const d = rank(a) - rank(b);
+    if (d !== 0) return d;
+    const na = Number(/^phase(\d+)$/.exec(a)?.[1] ?? 0);
+    const nb = Number(/^phase(\d+)$/.exec(b)?.[1] ?? 0);
+    return na - nb;
+  });
+}
+
+/** 0x10 状态帧里有对应位的设备（选相 3 个以上没有位定义） */
+export function hasStatusBit(key: string): boolean {
   return key !== 'activation' && !/^phase([3-9]|\d{2,})$/.test(key);
 }
 

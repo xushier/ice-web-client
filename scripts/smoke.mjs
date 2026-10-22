@@ -172,6 +172,38 @@ async function main() {
 
   log('✓ 全部断言通过');
   log(`  收发帧统计：${received.length} 条上行帧`);
+
+  // 电池活化：数据区 00 02 → 活化开；全 0 → 活化关（先关掉自动模式，便于观察待动作）
+  await req('PUT', '/api/server', { autoModeDefault: false });
+  await req('POST', `/api/modules/${mod.id}/devices/activation`, { state: 'on' });
+  await sleep(300);
+  let st = await req('GET', '/api/state');
+  assert(st.modules.find((x) => x.id === mod.id).states.activation === 'on', '活化应能置开');
+  terminal.write(build(MODULE_ID, 0x00, [0x00, 0x02]));
+  await sleep(300);
+  st = await req('GET', '/api/state');
+  const pend = st.modules.find((x) => x.id === mod.id).pending;
+  assert(pend.some((p) => p.key === 'activation'), '收到 00 02 应产生活化开待动作');
+  terminal.write(build(MODULE_ID, 0x00, [0x00, 0x00]));
+  await sleep(300);
+  st = await req('GET', '/api/state');
+  const pend2 = st.modules.find((x) => x.id === mod.id).pending;
+  assert(pend2.some((p) => p.key === 'activation' && p.target === 'off'), '收到全 0 帧应按约定产生活化关');
+  log('✓ 电池活化指令 断言通过');
+
+  // 创建即连接（回归：勾选「创建后立即连接」必须真的连上；设备顺序按传入保存）
+  const mod2 = await req('POST', '/api/modules', {
+    towerName: '自动连接塔',
+    moduleId: 11,
+    devices: ['ground', 'phase1', 'lock', 'ice'],
+    autoConnect: true,
+  });
+  await sleep(900);
+  const state2 = await req('GET', '/api/state');
+  const m2 = state2.modules.find((x) => x.id === mod2.id);
+  assert(m2.link === 'online', '勾选「创建后立即连接」应立即上线');
+  assert(m2.devices.join(',') === 'ground,phase1,lock,ice', '设备顺序应按传入顺序保存');
+  log('✓ 创建即连接 / 设备顺序 断言通过');
 }
 
 main()

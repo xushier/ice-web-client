@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react';
-import { FolderCog, Plus, Radio, Send, Settings2, Terminal, Wifi, WifiOff } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  FolderCog,
+  Plus,
+  Radio,
+  Send,
+  Settings2,
+  Terminal,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
 import ModuleCard from '@/web/components/ModuleCard';
@@ -9,18 +20,34 @@ import FramePanel from '@/web/components/FramePanel';
 import FrameBuilder from '@/web/components/FrameBuilder';
 import { Badge, Button, cn } from '@/web/components/ui';
 
+const LINK_DOT: Record<string, string> = {
+  online: 'bg-emerald-500',
+  connecting: 'bg-amber-500',
+  offline: 'bg-rose-500',
+  idle: 'bg-slate-300',
+};
+
+const LINK_TEXT: Record<string, string> = {
+  online: '在线',
+  connecting: '连接中',
+  offline: '离线',
+  idle: '未连接',
+};
+
 export default function App() {
   const init = useStore((s) => s.init);
   const state = useStore((s) => s.state);
   const ws = useStore((s) => s.ws);
   const toasts = useStore((s) => s.toasts);
   const dismissToast = useStore((s) => s.dismissToast);
+  const toast = useStore((s) => s.toast);
   const run = useStore((s) => s.run);
 
   const [newOpen, setNewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [framesOpen, setFramesOpen] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === '1');
 
   useEffect(() => {
     init();
@@ -30,8 +57,15 @@ export default function App() {
   const server = state?.server;
   const online = modules.filter((m) => m.link === 'online').length;
 
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    localStorage.setItem('sidebar-collapsed', next ? '1' : '0');
+  };
+
   const bulk = async (action: 'connect' | 'disconnect') => {
     for (const m of modules) await api.link(m.id, action);
+    toast(action === 'connect' ? `已对 ${modules.length} 个模块发起连接` : `已断开 ${modules.length} 个模块`);
   };
 
   return (
@@ -47,7 +81,7 @@ export default function App() {
 
         <button
           onClick={() => setSettingsOpen(true)}
-          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 active:bg-slate-100"
         >
           <Settings2 className="size-3" />
           {server?.host ? `${server.host}:${server.port}` : '未配置服务器'}
@@ -72,22 +106,26 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          <Button size="sm" onClick={() => setNewOpen(true)}>
+          <Button size="sm" variant="primary" onClick={() => setNewOpen(true)}>
             <Plus className="size-3.5" />
             新建模块
           </Button>
-          <Button size="sm" variant="ghost" className="hidden xl:inline-flex" onClick={() => void run(() => bulk('connect'))}>
+          <Button size="sm" variant="outline" onClick={() => void run(() => bulk('connect'))}>
             全部连接
           </Button>
-          <Button size="sm" variant="ghost" className="hidden xl:inline-flex" onClick={() => void run(() => bulk('disconnect'))}>
+          <Button size="sm" variant="outline" onClick={() => void run(() => bulk('disconnect'))}>
             全部断开
           </Button>
-          <div className="mx-1 hidden h-4 w-px bg-slate-200 xl:block" />
-          <Button size="sm" variant="ghost" onClick={() => setFramesOpen(true)}>
+          <div className="mx-1 h-4 w-px bg-slate-200" />
+          <Button
+            size="sm"
+            variant={framesOpen ? 'primary' : 'outline'}
+            onClick={() => setFramesOpen(!framesOpen)}
+          >
             <Radio className="size-3.5" />
             帧监视
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setBuilderOpen(true)}>
+          <Button size="sm" variant="outline" onClick={() => setBuilderOpen(true)}>
             <Send className="size-3.5" />
             帧构造器
           </Button>
@@ -101,61 +139,78 @@ export default function App() {
       ) : null}
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
-          <div className="flex items-center justify-between px-3 py-2 text-[11px] font-medium text-slate-500">
-            <span className="inline-flex items-center gap-1">
-              <FolderCog className="size-3" />
-              模块
-            </span>
-            <button className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600" onClick={() => setNewOpen(true)}>
-              <Plus className="size-3.5" />
-            </button>
+        <aside
+          className={cn(
+            'flex shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200',
+            collapsed ? 'w-11' : 'w-56',
+          )}
+        >
+          <div className="flex items-center justify-between px-2 py-2 text-[11px] font-medium text-slate-500">
+            {collapsed ? null : (
+              <span className="inline-flex items-center gap-1">
+                <FolderCog className="size-3" />
+                模块
+              </span>
+            )}
+            <div className={cn('flex items-center gap-1', collapsed && 'mx-auto flex-col')}>
+              {collapsed ? null : (
+                <button
+                  className="rounded p-0.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 active:bg-slate-200"
+                  onClick={() => setNewOpen(true)}
+                  title="新建模块"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              )}
+              <button
+                className="rounded p-0.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 active:bg-slate-200"
+                onClick={toggleCollapsed}
+                title={collapsed ? '展开模块栏' : '折叠模块栏'}
+              >
+                {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronLeft className="size-3.5" />}
+              </button>
+            </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+
+          <div className={cn('min-h-0 flex-1 overflow-y-auto pb-2', collapsed ? 'px-1' : 'px-1.5')}>
             {modules.length === 0 ? (
-              <p className="px-2 py-4 text-[11px] leading-relaxed text-slate-400">
-                还没有模块。点上方 + 新建一个主控模块，填入平台配置的 ID。
-              </p>
+              collapsed ? null : (
+                <p className="px-2 py-4 text-[11px] leading-relaxed text-slate-400">
+                  还没有模块。点上方 + 新建一个主控模块，填入平台配置的 ID。
+                </p>
+              )
             ) : (
               modules.map((m) => (
                 <button
                   key={m.id}
                   onClick={() => document.getElementById(`mod-${m.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                  className="mb-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-50"
+                  title={`${m.towerName} #${m.moduleId} · ${LINK_TEXT[m.link]}`}
+                  className={cn(
+                    'mb-0.5 flex w-full items-center rounded-lg text-left transition-colors hover:bg-slate-50 active:bg-slate-100',
+                    collapsed ? 'justify-center py-2' : 'gap-2 px-2 py-1.5',
+                  )}
                 >
-                  <span
-                    className={cn(
-                      'size-1.5 shrink-0 rounded-full',
-                      m.link === 'online'
-                        ? 'bg-emerald-500'
-                        : m.link === 'connecting'
-                          ? 'bg-amber-500'
-                          : m.link === 'offline'
-                            ? 'bg-rose-500'
-                            : 'bg-slate-300',
-                    )}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[11px] text-slate-700">{m.towerName}</span>
-                    <span className="block text-[10px] text-slate-400">
-                      #{m.moduleId} · {m.link === 'online' ? '在线' : m.link === 'connecting' ? '连接中' : m.link === 'offline' ? '离线' : '未连接'}
+                  <span className={cn('size-1.5 shrink-0 rounded-full', LINK_DOT[m.link])} />
+                  {collapsed ? null : (
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[11px] text-slate-700">{m.towerName}</span>
+                      <span className="block text-[10px] text-slate-400">
+                        #{m.moduleId} · {LINK_TEXT[m.link]}
+                      </span>
                     </span>
-                  </span>
+                  )}
                 </button>
               ))
             )}
           </div>
-          <div className="border-t border-slate-100 px-3 py-2 text-[10px] leading-relaxed text-slate-400">
-            每个模块一条独立 TCP；平台按 ID 绑定铁塔。
-          </div>
         </aside>
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-4">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
           {modules.length === 0 ? (
             <div className="mt-20 text-center">
               <p className="text-[13px] text-slate-500">先创建一个主控模块</p>
               <p className="mx-auto mt-1 max-w-md text-[11px] leading-relaxed text-slate-400">
-                填写平台里配置的模块 ID（例如 12），选择该塔下的设备与数量，连接后终端会把各设备状态上报给平台。
+                填写平台里配置的模块 ID（例如 12），选择该塔下的设备与展示顺序，连接后终端会把各设备状态上报给平台。
               </p>
               <Button className="mt-4" variant="primary" onClick={() => setNewOpen(true)}>
                 <Plus className="size-3.5" />
@@ -172,9 +227,10 @@ export default function App() {
             </div>
           )}
         </main>
+
+        <FramePanel open={framesOpen} onClose={() => setFramesOpen(false)} />
       </div>
 
-      <FramePanel open={framesOpen} onClose={() => setFramesOpen(false)} />
       <NewModuleDialog open={newOpen} onClose={() => setNewOpen(false)} />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <FrameBuilder open={builderOpen} onClose={() => setBuilderOpen(false)} />
@@ -185,7 +241,7 @@ export default function App() {
             key={t.id}
             onClick={() => dismissToast(t.id)}
             className={cn(
-              'pointer-events-auto rounded-lg px-3 py-1.5 text-[11px] shadow-lg',
+              'pointer-events-auto rounded-lg px-3 py-1.5 text-[11px] shadow-lg transition-transform active:scale-[0.98]',
               t.kind === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white',
             )}
           >

@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { ModuleSession, type SessionDeps } from './session';
 import {
   DEFAULT_SERVER,
+  INITIAL_STATE,
+  MELT_STATE,
   deviceMeta,
+  orderDevices,
   randomTelemetry,
   type AppState,
   type FrameEntry,
@@ -102,8 +105,11 @@ export class Manager {
     autoConnect?: boolean;
   }): ModuleSnapshot {
     const moduleId = clamp(Number(input.moduleId), 0, 4095);
-    const phaseCount = clamp(Number(input.phaseCount ?? 2), 0, 4);
-    const devices = (input.devices ?? defaultDevices(phaseCount)).filter((k) => k !== 'phase0');
+    const requestedPhaseCount = clamp(Number(input.phaseCount ?? 2), 0, 4);
+    const devices = input.devices?.length
+      ? [...input.devices]
+      : orderDevices(defaultDevices(requestedPhaseCount));
+    const phaseCount = countPhases(devices);
     const cfg: ModuleConfig = normalizeModule({
       id: randomUUID(),
       towerName: (input.towerName ?? '').trim() || `铁塔 ${moduleId}`,
@@ -118,9 +124,10 @@ export class Manager {
     const session = new ModuleSession(cfg, this.deps);
     this.sessions.set(cfg.id, session);
     this.frames.set(cfg.id, []);
-    this.log(cfg.id, `新建模块 #${cfg.moduleId}`);
+    this.log(cfg.id, `新建模块 #${cfg.moduleId}（${devices.map((k) => deviceMeta(k).name).join('、')}）`);
     this.saveNow();
     this.scheduleBroadcast();
+    if (cfg.autoConnect) session.connect();
     return session.snapshot();
   }
 
@@ -135,13 +142,15 @@ export class Manager {
       telemetry: { ...session.cfg.telemetry, ...(patch.telemetry ?? {}) },
     };
     next.moduleId = clamp(Number(next.moduleId), 0, 4095);
-    next.phaseCount = clamp(Number(next.phaseCount), 0, 4);
     if (patch.devices) {
+      next.phaseCount = countPhases(next.devices);
       // 补齐新增设备的默认状态
       const defaults = defaultStates(next.phaseCount);
       for (const key of next.devices) {
         if (!next.states[key]) next.states[key] = defaults[key] ?? 'closed';
       }
+    } else {
+      next.phaseCount = clamp(Number(next.phaseCount), 0, 4);
     }
     session.cfg = next;
     this.saveDebounced();
@@ -220,6 +229,14 @@ export class Manager {
     const session = this.sessions.get(id);
     if (!session) return;
     session.setTelemetry(patch);
+    this.saveDebounced();
+  }
+
+  setPreset(id: string, preset: 'initial' | 'melt'): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    session.applyPreset(preset === 'initial' ? INITIAL_STATE : MELT_STATE);
+    this.log(id, `一键${preset === 'initial' ? '初始态' : '融冰态'}`);
     this.saveDebounced();
   }
 
@@ -314,6 +331,10 @@ function defaultDevices(phaseCount: number): string[] {
   for (let i = 1; i <= phaseCount; i++) devices.push(`phase${i}`);
   devices.push('activation');
   return devices;
+}
+
+function countPhases(devices: string[]): number {
+  return devices.filter((k) => /^phase\d+$/.test(k)).length;
 }
 
 function normalizeModule(cfg: ModuleConfig): ModuleConfig {

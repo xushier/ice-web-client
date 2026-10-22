@@ -146,7 +146,7 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
       open={open}
       onClose={onClose}
       title="帧构造器"
-      description="选类型、勾位或填字段即生成合法帧；也可直接粘整帧 hex 发送。"
+      description="帧结构：5A47 | 长度(=3+数据区) | ID(2B, bit0=大小号侧) | 类型 | 数据 | CRC16-MODBUS(低字节在前)。"
       width="max-w-3xl"
       footer={
         <>
@@ -241,6 +241,8 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
                   { label: '融冰分', keys: ['0:2'] },
                   { label: '闭锁', keys: ['0:1'] },
                   { label: '开锁', keys: ['0:0'] },
+                  { label: '活化开', keys: ['1:1'] },
+                  { label: '活化关(全0)', keys: [] as string[] },
                 ]
               : []
             ).map((p) => (
@@ -296,6 +298,10 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
               </div>
             ))}
           </div>
+          <p className="mt-1.5 text-[10px] text-slate-400">
+            高字节在前：Byte0 为高字节、Byte1 为低字节；勾选即置 1，未勾选的位为 0。
+            {type === 0x00 ? ' 数据区全 0 即「电池活化关闭」（现场帧 5A47050001000000F3E5）。' : ''}
+          </p>
         </div>
       ) : null}
 

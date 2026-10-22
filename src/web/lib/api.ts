@@ -46,6 +46,8 @@ export const api = {
     req<{ ok: boolean }>('POST', `/api/modules/${id}/pending/${pendingId}`, { action }),
   telemetry: (id: string, patch: Partial<ModuleConfig['telemetry']>) =>
     req<{ ok: boolean }>('POST', `/api/modules/${id}/telemetry`, patch),
+  preset: (id: string, preset: 'initial' | 'melt') =>
+    req<{ ok: boolean }>('POST', `/api/modules/${id}/preset`, { preset }),
   report: (id: string, includePower = false) =>
     req<{ ok: boolean }>('POST', `/api/modules/${id}/report`, { includePower }),
   send: (id: string, payload: { hex?: string; type?: number; dataHex?: string; moduleId?: number }) =>

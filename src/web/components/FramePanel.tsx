@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, Copy, Search, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Copy, Info, Search, X } from 'lucide-react';
 import type { FrameEntry } from '@/core/types';
 import { useStore } from '@/web/lib/store';
 import { Badge, Button, Input, cn } from './ui';
@@ -13,6 +13,7 @@ export default function FramePanel({ open, onClose }: { open: boolean; onClose: 
   const [moduleFilter, setModuleFilter] = useState('');
   const [keyword, setKeyword] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   const list = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
@@ -32,23 +33,62 @@ export default function FramePanel({ open, onClose }: { open: boolean; onClose: 
   if (!open) return null;
 
   return (
-    <aside className="fixed right-0 top-0 z-40 flex h-full w-[560px] flex-col border-l border-slate-200 bg-white shadow-2xl">
-      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+    <aside className="flex w-[460px] shrink-0 flex-col border-l border-slate-200 bg-white">
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
         <div>
-          <h2 className="text-sm font-medium text-slate-800">帧监视</h2>
-          <p className="text-[10px] text-slate-400">实时收发帧 · 共缓存 {frames.length} 条 · 显示 {list.length} 条</p>
+          <h2 className="flex items-center gap-1.5 text-[13px] font-medium text-slate-800">
+            帧监视
+            <button
+              className={cn(
+                'rounded p-0.5 transition-colors hover:bg-slate-100 active:bg-slate-200',
+                showHelp ? 'text-slate-700' : 'text-slate-400',
+              )}
+              title="帧结构速查"
+              onClick={() => setShowHelp(!showHelp)}
+            >
+              <Info className="size-3.5" />
+            </button>
+          </h2>
+          <p className="text-[10px] text-slate-400">
+            实时收发 · 缓存 {frames.length} 条 · 显示 {list.length} 条
+          </p>
         </div>
         <div className="flex items-center gap-1">
-          <Button size="xs" variant="ghost" onClick={clearFrames}>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => {
+              clearFrames();
+              toast('已清空本地显示');
+            }}
+          >
             清空
           </Button>
-          <button className="rounded p-1 text-slate-400 hover:bg-slate-100" onClick={onClose}>
+          <button
+            className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
+            onClick={onClose}
+            title="收起"
+          >
             <X className="size-4" />
           </button>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2">
+      {showHelp ? (
+        <div className="border-b border-slate-100 bg-slate-50 px-4 py-2 text-[10px] leading-relaxed text-slate-500">
+          <div className="font-mono text-[10px] text-slate-600">
+            5A 47 | 长度 | ID(2B) | 类型 | 数据(nB) | CRC(2B, 低字节在前)
+          </div>
+          长度 = 3 + 数据区长度（0x00 / 0x10 为 5，0x20 为 21）。ID 为 12bit，bit0 表示大小号侧。
+          <br />
+          0x00 是平台下发的唯一动作命令帧，数据区 16 位：接地合 b7 / 接地分 b6 / 选相1 合 b5 分 b4 / 选相2 合 b3 分 b2（低字节），
+          融冰合 b3 / 融冰分 b2 / 闭锁 b1 / 开锁 b0（高字节），低字节 b1 = 电池活化开，数据区全 0 = 活化关。
+          <br />
+          0x10 是终端上报的 DI 状态，位定义与 0x00 不同，展开任意一帧即可逐位对照。
+        </div>
+      ) : null}
+
+      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
         <div className="relative flex-1">
           <Search className="absolute left-2 top-1/2 size-3 -translate-y-1/2 text-slate-400" />
           <Input
@@ -72,7 +112,7 @@ export default function FramePanel({ open, onClose }: { open: boolean; onClose: 
         </select>
         <Button
           size="xs"
-          variant={onlyAbnormal ? 'primary' : 'ghost'}
+          variant={onlyAbnormal ? 'primary' : 'outline'}
           onClick={() => setOnlyAbnormal(!onlyAbnormal)}
           title="只显示未定义帧类型或 CRC 不一致的帧"
         >
@@ -116,7 +156,10 @@ function FrameRow({
   const abnormal = !p.known || !p.crcOk;
   return (
     <div className={cn('border-b border-slate-100', abnormal && 'bg-amber-50/40')}>
-      <button className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-slate-50" onClick={onToggle}>
+      <button
+        className="flex w-full items-start gap-2 px-3 py-1.5 text-left transition-colors hover:bg-slate-50 active:bg-slate-100"
+        onClick={onToggle}
+      >
         <span className="w-14 shrink-0 pt-0.5 font-mono text-[10px] text-slate-400">
           {new Date(frame.ts).toLocaleTimeString('zh-CN', { hour12: false })}
         </span>

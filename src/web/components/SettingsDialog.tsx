@@ -71,6 +71,9 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
       <div className="space-y-4">
         <section>
           <h3 className="mb-2 text-[11px] font-medium text-slate-500">服务端</h3>
+          <p className="mb-2 text-[10px] leading-relaxed text-slate-400">
+            平台按帧里的模块 ID（12bit，bit0 为大小号侧）判定该塔是否在线，所以这里的端口与各模块的 ID 必须和平台配置一致。
+          </p>
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
               <Field label="IP 或域名">

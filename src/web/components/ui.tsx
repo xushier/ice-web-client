@@ -9,11 +9,12 @@ export function cn(...args: Parameters<typeof clsx>): string {
 type Variant = 'primary' | 'outline' | 'ghost' | 'danger' | 'subtle';
 
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-slate-900 text-white hover:bg-slate-800 border border-slate-900',
-  outline: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50',
-  ghost: 'bg-transparent text-slate-600 border border-transparent hover:bg-slate-100',
-  danger: 'bg-white text-rose-600 border border-rose-200 hover:bg-rose-50',
-  subtle: 'bg-slate-100 text-slate-700 border border-transparent hover:bg-slate-200',
+  primary: 'bg-slate-900 text-white hover:bg-slate-800 border border-slate-900 active:bg-slate-950',
+  outline:
+    'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 active:bg-slate-100',
+  ghost: 'bg-transparent text-slate-600 border border-transparent hover:bg-slate-100 active:bg-slate-200',
+  danger: 'bg-white text-rose-600 border border-rose-200 hover:bg-rose-50 active:bg-rose-100',
+  subtle: 'bg-slate-100 text-slate-700 border border-transparent hover:bg-slate-200 active:bg-slate-300',
 };
 
 const SIZES = {
@@ -31,7 +32,8 @@ export function Button({
   return (
     <button
       className={cn(
-        'inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex items-center justify-center whitespace-nowrap font-medium transition-all',
+        'active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100',
         VARIANTS[variant],
         SIZES[size],
         className,

@@ -121,6 +121,14 @@ async function main(): Promise<void> {
     return { ok: true };
   });
 
+  app.post('/api/modules/:id/preset', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { preset } = req.body as { preset: 'initial' | 'melt' };
+    if (preset !== 'initial' && preset !== 'melt') return reply.code(400).send({ error: 'preset 必须是 initial 或 melt' });
+    manager.setPreset(id, preset);
+    return { ok: true };
+  });
+
   app.post('/api/modules/:id/report', async (req) => {
     const { id } = req.params as { id: string };
     const { includePower } = (req.body ?? {}) as { includePower?: boolean };

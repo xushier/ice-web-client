@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { crc16Modbus } from '../src/protocol/crc';
 import { FrameDecoder, decodeFrame, encodeFrame, parseHex, toHex } from '../src/protocol/frame';
-import { decodeCommand, encodeCommand, encodeStatus, coarseBattery, type StatusSnapshot } from '../src/protocol/bits';
+import { decodeCommand, encodeCommand, encodeStatus, coarseBattery, defaultStates, type StatusSnapshot } from '../src/protocol/bits';
+import { deviceButtons, orderDevices } from '../src/core/types';
 import { encodePower } from '../src/protocol/power';
 import { describe as describeFrame } from '../src/protocol/describe';
 
@@ -209,5 +210,83 @@ describe('未知帧类型', () => {
     expect(parsed.known).toBe(false);
     expect(parsed.summary).toContain('未定义帧类型 0x77');
     expect(parsed.fields).toHaveLength(2);
+  });
+});
+
+describe('电池活化指令', () => {
+  it('活化开 = 数据区 00 02（与现场 5A470500010000027224 一致）', () => {
+    const { actions, allZero } = decodeCommand(Uint8Array.from([0x00, 0x02]));
+    expect(allZero).toBe(false);
+    expect(actions.map((a) => `${a.slot}:${a.kind}`)).toEqual(['activation:on']);
+  });
+
+  it('活化关 = 数据区全 0（与现场 5A47050001000000F3E5 一致）', () => {
+    const { actions, allZero } = decodeCommand(Uint8Array.from([0x00, 0x00]));
+    expect(actions).toHaveLength(0);
+    expect(allZero).toBe(true);
+  });
+
+  it('生成器里的活化帧 CRC 校验通过', () => {
+    const on = decodeFrame(parseHex('5A470500010000027224'));
+    expect(on.crcOk).toBe(true);
+    expect([...on.data]).toEqual([0x00, 0x02]);
+    const off = decodeFrame(parseHex('5A47050001000000F3E5'));
+    expect(off.crcOk).toBe(true);
+    expect([...off.data]).toEqual([0x00, 0x00]);
+  });
+});
+
+describe('动作中状态', () => {
+  it('动作中在 0x10 里两位都为 0', () => {
+    const [b0, b1] = encodeStatus({
+      ...DEFAULT_STATUS,
+      ground: 'opening',
+      ice: 'closing',
+      lock: 'unlocking',
+      phases: ['opening', 'closing'],
+    });
+    expect(b0 & 0x01).toBe(0);
+    expect(b1 & 0x80).toBe(0);
+    expect(b0 & 0x18).toBe(0);
+    expect(b0 & 0x06).toBe(0);
+    expect(b1 & 0x78).toBe(0);
+  });
+
+  it('到位后对应位置 1', () => {
+    const [b0] = encodeStatus({ ...DEFAULT_STATUS, lock: 'unlocked' });
+    expect(b0 & 0x02).toBe(0x02);
+  });
+});
+
+describe('默认状态与设备顺序', () => {
+  it('默认初始态：接地合、选相分、锁闭锁、融冰分、活化关', () => {
+    expect(defaultStates(2)).toEqual({
+      ground: 'closed',
+      ice: 'open',
+      lock: 'locked',
+      activation: 'off',
+      phase1: 'open',
+      phase2: 'open',
+    });
+  });
+
+  it('默认排序：接地 → 选相 → 融冰锁 → 融冰 → 活化', () => {
+    expect(orderDevices(['ice', 'lock', 'phase2', 'ground', 'activation', 'phase1'])).toEqual([
+      'ground',
+      'phase1',
+      'phase2',
+      'lock',
+      'ice',
+      'activation',
+    ]);
+  });
+
+  it('三列按钮：左初始态、中动作中、右融冰态', () => {
+    expect(deviceButtons('ground', 'closed').map((b) => b.value)).toEqual(['closed', 'opening', 'open']);
+    expect(deviceButtons('ground', 'open').map((b) => b.label)).toEqual(['合闸到位', '合闸中', '分闸到位']);
+    expect(deviceButtons('ice', 'open').map((b) => b.value)).toEqual(['open', 'closing', 'closed']);
+    expect(deviceButtons('lock', 'locked').map((b) => b.label)).toEqual(['闭锁到位', '开锁中', '开锁到位']);
+    expect(deviceButtons('phase1', 'closed').map((b) => b.label)).toEqual(['分闸到位', '分闸中', '合闸到位']);
+    expect(deviceButtons('activation', 'off').map((b) => b.label)).toEqual(['活化关闭', '活化开启']);
   });
 });

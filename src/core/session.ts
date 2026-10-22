@@ -2,7 +2,7 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { FrameDecoder, FT, decodeFrame, encodeFrame } from '../protocol/frame';
 import { describe } from '../protocol/describe';
-import { decodeCommand, encodeStatus } from '../protocol/bits';
+import { decodeCommand, encodeStatus, type DeviceState } from '../protocol/bits';
 import { encodePower } from '../protocol/power';
 import type { FrameEntry, LinkState, ModuleConfig, ModuleSnapshot, PendingAction, ServerConfig } from './types';
 import { deviceMeta } from './types';
@@ -20,6 +20,8 @@ const TARGET_OF_KIND: Record<string, string> = {
   open: 'open',
   lock: 'locked',
   unlock: 'unlocked',
+  on: 'on',
+  off: 'off',
 };
 
 export class ModuleSession {
@@ -41,6 +43,8 @@ export class ModuleSession {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reportTimer: NodeJS.Timeout | null = null;
   private connectTimer: NodeJS.Timeout | null = null;
+  private stableTimer: NodeJS.Timeout | null = null;
+  private connectedAt = 0;
   private autoTimers = new Map<string, NodeJS.Timeout>();
   private closedByUser = false;
 
@@ -123,9 +127,15 @@ export class ModuleSession {
     this.connectTimer = null;
     this.link = 'online';
     this.error = null;
-    this.attempts = 0;
     this.decoder = new FrameDecoder();
     this.pending = [];
+    this.connectedAt = Date.now();
+    // 稳定在线 15s 才认为连接可用，避免「连上即被踢」导致退避一直被重置
+    if (this.stableTimer) clearTimeout(this.stableTimer);
+    this.stableTimer = setTimeout(() => {
+      this.stableTimer = null;
+      this.attempts = 0;
+    }, 15_000);
     this.deps.log(this.cfg.id, `已连接 ${this.deps.server().host}:${this.deps.server().port}`);
 
     const srv = this.deps.server();
@@ -155,9 +165,18 @@ export class ModuleSession {
   }
 
   private onClose(): void {
+    const lived = this.connectedAt ? Date.now() - this.connectedAt : 0;
+    this.connectedAt = 0;
+    if (this.stableTimer) {
+      clearTimeout(this.stableTimer);
+      this.stableTimer = null;
+    }
     this.stopTimers();
     this.clearAutoTimers();
     this.pending = [];
+    if (!this.closedByUser && lived > 0 && lived < 1500) {
+      this.error = '服务端立即断开：该模块 ID 可能已有其他会话在线';
+    }
     if (this.link !== 'idle') this.link = this.closedByUser ? 'idle' : 'offline';
     this.sock = null;
     this.notify();
@@ -177,8 +196,11 @@ export class ModuleSession {
   private teardownSocket(): void {
     if (this.connectTimer) clearTimeout(this.connectTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.stableTimer) clearTimeout(this.stableTimer);
     this.connectTimer = null;
     this.reconnectTimer = null;
+    this.stableTimer = null;
+    this.connectedAt = 0;
     this.stopTimers();
     this.clearAutoTimers();
     const sock = this.sock;
@@ -228,7 +250,15 @@ export class ModuleSession {
   private handleCommand(data: Uint8Array): void {
     const srv = this.deps.server();
     if (srv.ackCommand) this.sendFrame(FT.CMD_ACK, [0x00]);
-    const { actions } = decodeCommand(data);
+    const { actions, allZero } = decodeCommand(data);
+    // 约定：数据区全 0（5A470500xx00 0000****）表示电池活化关闭
+    if (allZero) {
+      if (this.cfg.devices.includes('activation')) {
+        actions.push({ slot: 'activation', kind: 'off', label: '电池活化 关闭（数据区全 0）' });
+      } else {
+        this.deps.log(this.cfg.id, '收到数据区全 0 的命令帧（按约定为活化关闭），该模块未配置电池活化，已忽略');
+      }
+    }
     if (!actions.length) return;
 
     const now = Date.now();
@@ -263,7 +293,6 @@ export class ModuleSession {
   }
 
   private keyForSlot(slot: string): string | null {
-    if (slot === 'discharge') return null;
     if (slot === 'phase1' || slot === 'phase2') {
       const idx = slot === 'phase1' ? 1 : 2;
       if (this.cfg.phaseCount < idx) return null;
@@ -349,6 +378,18 @@ export class ModuleSession {
     this.scheduleReport();
   }
 
+  /** 一键初始态 / 融冰态：清空待动作，整批改状态后立即上报 */
+  applyPreset(states: Record<string, string>): void {
+    for (const key of this.cfg.devices) {
+      const value = states[key];
+      if (value) this.cfg.states[key] = value;
+    }
+    this.pending = [];
+    this.clearAutoTimers();
+    this.deps.onChange();
+    this.sendStatus();
+  }
+
   private scheduleReport(): void {
     if (this.reportTimer) clearTimeout(this.reportTimer);
     this.reportTimer = setTimeout(() => {
@@ -359,14 +400,12 @@ export class ModuleSession {
 
   sendStatus(): void {
     if (!this.isOnline()) return;
+    const st = this.cfg.states;
     const data = encodeStatus({
-      ground: (this.cfg.states.ground as 'open' | 'closed') ?? 'closed',
-      ice: (this.cfg.states.ice as 'open' | 'closed') ?? 'open',
-      lock: (this.cfg.states.lock as 'locked' | 'unlocked') ?? 'locked',
-      phases: [
-        (this.cfg.states.phase1 as 'open' | 'closed') ?? 'closed',
-        (this.cfg.states.phase2 as 'open' | 'closed') ?? 'closed',
-      ],
+      ground: (st.ground as DeviceState) ?? 'closed',
+      ice: (st.ice as DeviceState) ?? 'open',
+      lock: (st.lock as DeviceState) ?? 'locked',
+      phases: [(st.phase1 as DeviceState) ?? 'open', (st.phase2 as DeviceState) ?? 'open'],
       controlMode: this.cfg.telemetry.controlMode,
       networkError: this.cfg.telemetry.networkError,
       batteryPercent: this.cfg.telemetry.batteryPercent,
