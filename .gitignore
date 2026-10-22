@@ -1,0 +1,13 @@
+node_modules/
+dist/
+data/
+_tmp/
+.workbuddy/
+*.log
+*.local
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/
+coverage/
