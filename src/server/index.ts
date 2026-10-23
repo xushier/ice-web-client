@@ -8,7 +8,7 @@ import { Manager } from '../core/manager';
 import { encodeFrame, parseHex, toHexUpper } from '../protocol/frame';
 import type { ModuleConfig, ServerConfig } from '../core/types';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const PORT = Number(process.env.PORT ?? 8080);
 const DATA_DIR = process.env.DATA_DIR ?? path.join(process.cwd(), 'data');
 const WEB_DIR = path.resolve(process.env.WEB_DIR ?? 'dist/web');
@@ -75,14 +75,22 @@ async function main(): Promise<void> {
     if (body?.moduleId === undefined || Number.isNaN(Number(body.moduleId))) {
       return reply.code(400).send({ error: 'moduleId 必填，且必须是 0~4095 的数字' });
     }
-    return manager.createModule(body);
+    try {
+      return manager.createModule(body);
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
   });
 
   app.patch('/api/modules/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const result = manager.updateModule(id, req.body as Partial<ModuleConfig>);
-    if (!result) return reply.code(404).send({ error: '模块不存在' });
-    return result;
+    try {
+      const result = manager.updateModule(id, req.body as Partial<ModuleConfig>);
+      if (!result) return reply.code(404).send({ error: '模块不存在' });
+      return result;
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
   });
 
   app.delete('/api/modules/:id', async (req, reply) => {
@@ -132,8 +140,13 @@ async function main(): Promise<void> {
 
   app.post('/api/modules/:id/report', async (req) => {
     const { id } = req.params as { id: string };
-    const { includePower } = (req.body ?? {}) as { includePower?: boolean };
-    manager.report(id, includePower);
+    const { includePower, includeEnv, history } = (req.body ?? {}) as {
+      includePower?: boolean;
+      includeEnv?: boolean;
+      history?: boolean;
+    };
+    if (history) manager.reportHistory(id);
+    else manager.report(id, includePower, includeEnv);
     return { ok: true };
   });
 
@@ -188,6 +201,7 @@ async function main(): Promise<void> {
     if (body.server) manager.updateServer(body.server);
     for (const mod of body.modules) {
       manager.createModule({
+        protocol: mod.protocol,
         towerName: mod.towerName,
         moduleId: mod.moduleId,
         phaseCount: mod.phaseCount,

@@ -11,6 +11,12 @@ export interface ServerConfig {
   crcMode: 'auto' | 'zero';
   statusIntervalSec: number;
   powerIntervalSec: number;
+  /** 0x30 环境状态上报周期（秒），协议要求 120~3600 */
+  envIntervalSec: number;
+  /** 每小时把 0x10 + 0x20 + 0x30 连成一包上报（平台历史数据依赖整包） */
+  hourlyBundle: boolean;
+  /** 整包对齐到整点（每小时 :00:05），而不是从连接时刻起算 */
+  alignHourly: boolean;
   autoModeDefault: boolean;
   autoDelaySec: number;
   autoJitterMs: number;
@@ -28,6 +34,9 @@ export const DEFAULT_SERVER: ServerConfig = {
   crcMode: 'auto',
   statusIntervalSec: 60,
   powerIntervalSec: 3600,
+  envIntervalSec: 3600,
+  hourlyBundle: true,
+  alignHourly: true,
   autoModeDefault: false,
   autoDelaySec: 3,
   autoJitterMs: 0,
@@ -46,6 +55,14 @@ export interface Telemetry {
   networkError: boolean;
   /** MG500 才有：通信链路上报（0=4G / 1=光纤） */
   linkType?: '4g' | 'fiber';
+  /* ---- 以下为 0x30 环境状态（不填则按 0xFFFF 上报为「数据异常」） ---- */
+  envTemp?: number;
+  envHumidity?: number;
+  cell1Temp?: number;
+  cell2Temp?: number;
+  /** 空调状态：0 未通电 / 1 待机 / 2 运行 / 3 故障 */
+  acState?: number;
+  fireUsed?: boolean;
 }
 
 export type AutoMode = 'inherit' | 'on' | 'off';
@@ -88,6 +105,11 @@ export interface ModuleSnapshot extends ModuleConfig {
   rxCount: number;
   txCount: number;
   lastCommandAt: number | null;
+  /** 最近一次「历史整包」上报时间 */
+  lastHistoryAt: number | null;
+  /** 平台对 0x20 / 0x30 的应答时间（null = 未收到应答） */
+  lastPowerAck: number | null;
+  lastEnvAck: number | null;
 }
 
 export interface FrameEntry {
@@ -275,5 +297,11 @@ export function randomTelemetry(): Telemetry {
     controlMode: 'remote',
     networkError: false,
     linkType: '4g',
+    envTemp: randStep(15, 38, 0.1),
+    envHumidity: randStep(35, 75, 0.1),
+    cell1Temp: randStep(18, 34, 0.1),
+    cell2Temp: randStep(18, 34, 0.1),
+    acState: 2,
+    fireUsed: false,
   };
 }

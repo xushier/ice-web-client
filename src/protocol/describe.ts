@@ -70,8 +70,12 @@ export function describe(frame: DecodedFrame, protocol: ProtocolId = 'mg400'): P
       break;
     }
     case FT.ENV: {
-      base.summary = '环境状态（本期终端不上报，仅解析）';
-      base.fields = decodeEnvFields(frame.data);
+      const rows = decodeEnvFields(frame.data);
+      base.summary = `环境状态：${rows
+        .slice(0, 4)
+        .map((r) => `${r.label} ${r.value}`)
+        .join(' · ')}`;
+      base.fields = rows;
       break;
     }
     case FT.CMD_ACK:

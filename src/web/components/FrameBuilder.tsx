@@ -4,7 +4,7 @@ import type { ModuleSnapshot } from '@/core/types';
 import { getProfile } from '@/protocol/bits';
 import { decodeFrame, encodeFrame, parseHex, toHexUpper } from '@/protocol/frame';
 import { describe } from '@/protocol/describe';
-import { encodePower } from '@/protocol/power';
+import { encodeEnv, encodePower } from '@/protocol/power';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
 import { Badge, Button, Dialog, Field, Input, Select, cn } from './ui';
@@ -75,9 +75,9 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
     }
     if (type === 0x01 || type === 0x11) return [0x00];
     if (type === 0x05) return [0xff, 0xff];
-    if (type === 0x30) return Array.from(new Uint8Array(16));
+    if (type === 0x30) return Array.from(encodeEnv(target?.telemetry ?? {}));
     return null;
-  }, [rawMode, type, bits, power]);
+  }, [rawMode, type, bits, power, target?.telemetry]);
 
   const preview = useMemo(() => {
     if (rawMode) return rawHex.trim() ? rawHex.toUpperCase() : '—';

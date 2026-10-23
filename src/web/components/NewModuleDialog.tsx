@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, Check } from 'lucide-react';
 import { getProfile, type ProtocolId } from '@/protocol/bits';
-import { deviceMeta, orderDevices } from '@/core/types';
+import { deviceMeta, orderDevices, type ModuleSnapshot } from '@/core/types';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
 import { Button, Dialog, Field, Input, Select, Switch, cn } from './ui';
@@ -13,7 +13,23 @@ const PROTOCOLS: Array<{ id: ProtocolId; label: string; hint: string }> = [
   { id: 'mg500', label: 'MG500', hint: '2 个接地刀闸、最多 3 个选相、通信链路上报、无电量档/活化' },
 ];
 
-export default function NewModuleDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+const DEFAULT_ENABLED: Record<string, boolean> = {
+  ground: true,
+  ground2: false,
+  ice: true,
+  lock: true,
+  activation: false,
+};
+
+export default function NewModuleDialog({
+  open,
+  onClose,
+  editing,
+}: {
+  open: boolean;
+  onClose: () => void;
+  editing?: ModuleSnapshot | null;
+}) {
   const run = useStore((s) => s.run);
   const toast = useStore((s) => s.toast);
   const modules = useStore((s) => s.state?.modules) ?? [];
@@ -21,15 +37,44 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
   const [protocol, setProtocol] = useState<ProtocolId>('mg400');
   const [towerName, setTowerName] = useState('');
   const [moduleId, setModuleId] = useState('');
-  const [enabled, setEnabled] = useState<Record<string, boolean>>({
-    ground: true,
-    ice: true,
-    lock: true,
-    activation: false,
-  });
+  const [enabled, setEnabled] = useState<Record<string, boolean>>({ ...DEFAULT_ENABLED });
   const [phaseCount, setPhaseCount] = useState(2);
   const [order, setOrder] = useState<string[]>(() => orderDevices(ALL_KEYS));
   const [connectNow, setConnectNow] = useState(true);
+
+  const reset = () => {
+    setTowerName('');
+    setModuleId('');
+    setProtocol('mg400');
+    setEnabled({ ...DEFAULT_ENABLED });
+    setPhaseCount(2);
+    setOrder(orderDevices(ALL_KEYS));
+    setConnectNow(true);
+  };
+
+  // 打开时按「新建 / 编辑」灌入初值；关掉再开也能恢复正确内容
+  useEffect(() => {
+    if (!open) return;
+    if (!editing) {
+      reset();
+      return;
+    }
+    const phases = editing.devices.filter((k) => k.startsWith('phase')).length;
+    setProtocol(editing.protocol);
+    setTowerName(editing.towerName);
+    setModuleId(String(editing.moduleId));
+    setEnabled({
+      ground: editing.devices.includes('ground'),
+      ground2: editing.devices.includes('ground2'),
+      ice: editing.devices.includes('ice'),
+      lock: editing.devices.includes('lock'),
+      activation: editing.devices.includes('activation'),
+    });
+    setPhaseCount(phases);
+    setOrder([...editing.devices, ...orderDevices(ALL_KEYS).filter((k) => !editing.devices.includes(k))]);
+    setConnectNow(editing.autoConnect);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing?.id]);
 
   const profile = getProfile(protocol);
   const deviceToggles = useMemo(() => {
@@ -49,17 +94,14 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
     return order.filter((k) => keys.has(k));
   }, [enabled, phaseCount, profile, order]);
 
-  const reset = () => {
-    setTowerName('');
-    setModuleId('');
-    setProtocol('mg400');
-    setEnabled({ ground: true, ice: true, lock: true, activation: false });
-    setPhaseCount(2);
-    setOrder(orderDevices(ALL_KEYS));
-    setConnectNow(true);
-  };
-
   const pickProtocol = (id: ProtocolId) => {
+    if (editing && id !== editing.protocol && selected.length > 0) {
+      const next = getProfile(id);
+      const kept = selected.filter((k) => next.devices.includes(k));
+      if (kept.length !== selected.length) {
+        toast(`已切换协议：${selected.length - kept.length} 个该协议不支持的设备已取消勾选`);
+      }
+    }
     setProtocol(id);
     const next = getProfile(id);
     setEnabled({
@@ -89,10 +131,23 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
     if (!moduleId.trim() || Number.isNaN(id) || id < 0 || id > 4095) {
       throw new Error('模块 ID 必须是 0~4095 的整数');
     }
-    if (modules.some((m) => m.moduleId === id)) {
+    if (modules.some((m) => m.moduleId === id && m.id !== editing?.id)) {
       throw new Error(`模块 ID ${id} 已存在，请先删除或改用其他 ID`);
     }
     if (selected.length === 0) throw new Error('至少要选择一个设备');
+
+    if (editing) {
+      await api.updateModule(editing.id, {
+        protocol,
+        towerName: towerName.trim() || `铁塔 ${id}`,
+        moduleId: id,
+        devices: selected,
+      });
+      toast(`模块 #${id} 信息已更新${id !== editing.moduleId ? '，建议重连一次' : ''}`);
+      onClose();
+      return;
+    }
+
     await api.createModule({
       protocol,
       towerName: towerName.trim() || `铁塔 ${id}`,
@@ -109,18 +164,30 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
     <Dialog
       open={open}
       onClose={onClose}
-      title="新建主控模块"
-      description="一个模块对应一条独立 TCP 连接。协议不同，0x10 状态位定义不同，不能混用。"
+      title={editing ? '修改模块信息' : '新建主控模块'}
+      description={
+        editing
+          ? '协议、ID、铁塔号、设备勾选与展示顺序都可以改；修改 ID 后建议重连一次，让平台重新绑定。'
+          : '一个模块对应一条独立 TCP 连接。协议不同，0x10 状态位定义不同，不能混用。'
+      }
       width="max-w-2xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button onClick={() => void run(() => submit(false))}>仅创建</Button>
-          <Button variant="primary" onClick={() => void run(() => submit(connectNow))}>
-            {connectNow ? '创建并连接' : '创建'}
-          </Button>
+          {editing ? (
+            <Button variant="primary" onClick={() => void run(() => submit(false))}>
+              保存修改
+            </Button>
+          ) : (
+            <>
+              <Button onClick={() => void run(() => submit(false))}>仅创建</Button>
+              <Button variant="primary" onClick={() => void run(() => submit(connectNow))}>
+                {connectNow ? '创建并连接' : '创建'}
+              </Button>
+            </>
+          )}
         </>
       }
     >
@@ -237,8 +304,16 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
         </div>
 
         <div className="flex items-center justify-between">
-          <Switch checked={connectNow} onChange={setConnectNow} label="创建后立即连接" />
-          <span className="text-[10px] text-slate-400">初始态：接地合 · 选相分 · 锁闭锁 · 融冰分 · 活化关</span>
+          {editing ? (
+            <span className="text-[10px] text-slate-400">
+              当前设备状态会保留；新增设备按初始态（接地合 · 选相分 · 锁闭锁 · 融冰分）补齐
+            </span>
+          ) : (
+            <>
+              <Switch checked={connectNow} onChange={setConnectNow} label="创建后立即连接" />
+              <span className="text-[10px] text-slate-400">初始态：接地合 · 选相分 · 锁闭锁 · 融冰分</span>
+            </>
+          )}
         </div>
       </div>
     </Dialog>

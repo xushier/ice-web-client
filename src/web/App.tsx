@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
+import type { ModuleSnapshot } from '@/core/types';
 import ModuleCard from '@/web/components/ModuleCard';
 import NewModuleDialog from '@/web/components/NewModuleDialog';
 import SettingsDialog from '@/web/components/SettingsDialog';
@@ -49,6 +50,7 @@ export default function App() {
   const run = useStore((s) => s.run);
 
   const [newOpen, setNewOpen] = useState(false);
+  const [editing, setEditing] = useState<ModuleSnapshot | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [framesOpen, setFramesOpen] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -222,7 +224,7 @@ export default function App() {
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
               {modules.map((m) => (
                 <div key={m.id} id={`mod-${m.id}`}>
-                  <ModuleCard m={m} />
+                  <ModuleCard m={m} onEdit={() => setEditing(m)} />
                 </div>
               ))}
             </div>
@@ -232,7 +234,16 @@ export default function App() {
         <FramePanel open={framesOpen} onClose={() => setFramesOpen(false)} />
       </div>
 
-      <NewModuleDialog open={newOpen} onClose={() => setNewOpen(false)} />
+      <NewModuleDialog
+        open={newOpen}
+        onClose={() => setNewOpen(false)}
+        editing={null}
+      />
+      <NewModuleDialog
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        editing={editing}
+      />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <FrameBuilder open={builderOpen} onClose={() => setBuilderOpen(false)} />
 

@@ -66,8 +66,10 @@ const platform = net.createServer((sock) => {
         raw: [...raw],
       };
       received.push(frame);
-      // 平台行为：收到任何帧回心跳
-      sock.write(build(frame.id, 0x11, [0x00]));
+      // 平台行为：0x20 → 0x21，0x30 → 0x31，其余回心跳
+      if (frame.type === 0x20) sock.write(build(frame.id, 0x21, [0x00]));
+      else if (frame.type === 0x30) sock.write(build(frame.id, 0x31, [0x00]));
+      else sock.write(build(frame.id, 0x11, [0x00]));
     }
   });
   sock.on('error', () => {});
@@ -130,6 +132,13 @@ async function main() {
   assert(firstDi.data[0] & 0x01, '默认状态：接地刀闸应为合闸位');
   assert(firstDi.data[0] & 0x04, '默认状态：融冰锁应为闭锁位');
   assert(received.some((f) => f.type === 0x20), '连接后应发送 0x20 供电帧');
+  const firstEnv = received.find((f) => f.type === 0x30);
+  assert(firstEnv, '连接后应发送 0x30 环境帧');
+  assert(firstEnv.data.length === 16, '0x30 数据区应为 16 字节');
+  let stConn = (await req('GET', '/api/state')).modules.find((x) => x.id === mod.id);
+  assert(stConn.lastHistoryAt, '连接后应记录一次历史整包时间');
+  assert(stConn.lastPowerAck, '平台回 0x21 后应记录 0x20 应答时间');
+  assert(stConn.lastEnvAck, '平台回 0x31 后应记录 0x30 应答时间');
 
   // 平台下发「接地刀闸分闸」
   terminal.write(build(MODULE_ID, 0x00, [0x00, 0x40]));
@@ -205,6 +214,35 @@ async function main() {
   assert(m2.link === 'online', '勾选「创建后立即连接」应立即上线');
   assert(m2.devices.join(',') === 'ground,phase1,lock,ice', '设备顺序应按传入顺序保存');
   log('✓ 创建即连接 / 设备顺序 断言通过');
+
+  // 新建后还能改模块信息（不用删了重建）
+  const edited = await req('PATCH', `/api/modules/${mod2.id}`, {
+    towerName: '改过名的塔',
+    moduleId: 15,
+    devices: ['ice', 'ground', 'lock'],
+  });
+  assert(edited.towerName === '改过名的塔', '改名应生效');
+  assert(edited.moduleId === 15, '改模块 ID 应生效');
+  assert(edited.devices.join(',') === 'ice,ground,lock', '自定义设备顺序应保留');
+  let dupRejected = false;
+  try {
+    await req('PATCH', `/api/modules/${mod2.id}`, { moduleId: MODULE_ID });
+  } catch (err) {
+    dupRejected = /已被/.test(err.message);
+  }
+  assert(dupRejected, '重复模块 ID 应被拒绝');
+  log('✓ 模块信息可编辑 断言通过');
+
+  // 历史整包：0x10 + 0x20 + 0x30 连续三帧
+  const beforeHistory = received.length;
+  await req('POST', `/api/modules/${mod.id}/report`, { history: true });
+  await sleep(500);
+  const historyTypes = received.slice(beforeHistory).map((f) => f.type);
+  assert(
+    historyTypes.includes(0x10) && historyTypes.includes(0x20) && historyTypes.includes(0x30),
+    '历史整包应包含 0x10 / 0x20 / 0x30',
+  );
+  log('✓ 历史整包（0x10 + 0x20 + 0x30）断言通过');
 
   // MG500：多一个接地刀闸、一个选相，0x10 位定义不同
   const mod3 = await req('POST', '/api/modules', {

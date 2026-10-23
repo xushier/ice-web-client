@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { FrameDecoder, FT, decodeFrame, encodeFrame } from '../protocol/frame';
 import { describe } from '../protocol/describe';
 import { decodeCommand, getProfile, type DeviceState } from '../protocol/bits';
-import { encodePower } from '../protocol/power';
+import { encodeEnv, encodePower } from '../protocol/power';
 import type { FrameEntry, LinkState, ModuleConfig, ModuleSnapshot, PendingAction, ServerConfig } from './types';
 import { deviceMeta } from './types';
 
@@ -24,6 +24,15 @@ const TARGET_OF_KIND: Record<string, string> = {
   off: 'off',
 };
 
+const ENV_KEYS: Array<keyof ModuleConfig['telemetry']> = [
+  'envTemp',
+  'envHumidity',
+  'cell1Temp',
+  'cell2Temp',
+  'acState',
+  'fireUsed',
+];
+
 export class ModuleSession {
   cfg: ModuleConfig;
   link: LinkState = 'idle';
@@ -35,13 +44,19 @@ export class ModuleSession {
   rxCount = 0;
   txCount = 0;
   pending: PendingAction[] = [];
+  lastHistoryAt: number | null = null;
+  lastPowerAck: number | null = null;
+  lastEnvAck: number | null = null;
 
   private sock: net.Socket | null = null;
   private decoder = new FrameDecoder();
   private statusTimer: NodeJS.Timeout | null = null;
   private powerTimer: NodeJS.Timeout | null = null;
+  private envTimer: NodeJS.Timeout | null = null;
+  private bundleTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reportTimer: NodeJS.Timeout | null = null;
+  private envReportTimer: NodeJS.Timeout | null = null;
   private connectTimer: NodeJS.Timeout | null = null;
   private stableTimer: NodeJS.Timeout | null = null;
   private connectedAt = 0;
@@ -64,6 +79,9 @@ export class ModuleSession {
       rxCount: this.rxCount,
       txCount: this.txCount,
       lastCommandAt: this.lastCommandAt,
+      lastHistoryAt: this.lastHistoryAt,
+      lastPowerAck: this.lastPowerAck,
+      lastEnvAck: this.lastEnvAck,
     };
   }
 
@@ -140,8 +158,8 @@ export class ModuleSession {
 
     const srv = this.deps.server();
     if (srv.registerOnConnect) this.sendFrame(FT.REGISTER, [0xff, 0xff]);
-    this.sendStatus();
-    this.sendPower();
+    // 上线先补一包历史数据：0x10 → 0x20 → 0x30（平台历史页依赖这几帧）
+    this.reportHistory('connect');
     this.startTimers();
     this.notify();
   }
@@ -151,17 +169,48 @@ export class ModuleSession {
     const srv = this.deps.server();
     const statusMs = Math.max(5, srv.statusIntervalSec) * 1000;
     const powerMs = Math.max(30, srv.powerIntervalSec) * 1000;
+    const envMs = Math.min(3600, Math.max(120, srv.envIntervalSec || 3600)) * 1000;
     this.statusTimer = setInterval(() => this.sendStatus(), statusMs);
-    this.powerTimer = setInterval(() => this.sendPower(), powerMs);
+    if (srv.hourlyBundle) {
+      // 整包模式：默认对齐整点，平台历史数据通常按整点落一行
+      this.scheduleNextBundle();
+    } else {
+      this.powerTimer = setInterval(() => this.sendPower(), powerMs);
+      this.envTimer = setInterval(() => this.sendEnv(), envMs);
+    }
+  }
+
+  /** 递归排下一次整包：整点对齐时每次都重算到下一个 :00:05 */
+  private scheduleNextBundle(): void {
+    const srv = this.deps.server();
+    let delay = Math.max(30, srv.powerIntervalSec) * 1000;
+    if (srv.alignHourly) {
+      const now = new Date();
+      const next = new Date(now.getTime());
+      next.setMinutes(0, 5, 0);
+      if (next.getTime() <= now.getTime()) next.setHours(next.getHours() + 1);
+      delay = next.getTime() - now.getTime();
+    }
+    this.bundleTimer = setTimeout(() => {
+      this.bundleTimer = null;
+      this.reportHistory('auto');
+      this.scheduleNextBundle();
+    }, delay);
   }
 
   private stopTimers(): void {
     if (this.statusTimer) clearInterval(this.statusTimer);
     if (this.powerTimer) clearInterval(this.powerTimer);
+    if (this.envTimer) clearInterval(this.envTimer);
+    if (this.bundleTimer) clearTimeout(this.bundleTimer);
     if (this.reportTimer) clearTimeout(this.reportTimer);
+    if (this.envReportTimer) clearTimeout(this.envReportTimer);
     this.statusTimer = null;
     this.powerTimer = null;
+    this.envTimer = null;
+    this.bundleTimer = null;
     this.reportTimer = null;
+    this.envReportTimer = null;
   }
 
   private onClose(): void {
@@ -239,6 +288,8 @@ export class ModuleSession {
         parsed,
       });
       if (frame.type === FT.CMD) this.handleCommand(frame.data);
+      if (frame.type === FT.POWER_ACK) this.lastPowerAck = this.lastRx;
+      if (frame.type === FT.ENV_ACK) this.lastEnvAck = this.lastRx;
     }
     if (this.decoder.skippedBytes > 0) {
       this.deps.log(this.cfg.id, `丢弃 ${this.decoder.skippedBytes} 个无法同步的字节`);
@@ -373,6 +424,7 @@ export class ModuleSession {
     this.cfg.telemetry = { ...this.cfg.telemetry, ...patch };
     this.deps.onChange();
     this.scheduleReport();
+    if (ENV_KEYS.some((key) => key in patch)) this.scheduleEnv();
   }
 
   /** 一键初始态 / 融冰态：清空待动作，整批改状态后立即上报 */
@@ -393,6 +445,14 @@ export class ModuleSession {
       this.reportTimer = null;
       this.sendStatus();
     }, 80);
+  }
+
+  private scheduleEnv(): void {
+    if (this.envReportTimer) clearTimeout(this.envReportTimer);
+    this.envReportTimer = setTimeout(() => {
+      this.envReportTimer = null;
+      this.sendEnv();
+    }, 120);
   }
 
   sendStatus(): void {
@@ -420,6 +480,28 @@ export class ModuleSession {
   sendPower(): void {
     if (!this.isOnline()) return;
     this.sendFrame(FT.POWER, encodePower(this.cfg.telemetry));
+  }
+
+  sendEnv(): void {
+    if (!this.isOnline()) return;
+    this.sendFrame(FT.ENV, encodeEnv(this.cfg.telemetry));
+  }
+
+  /**
+   * 历史整包：0x10 + 0x20 + 0x30 连续发送。
+   * 平台历史数据页需要同一时刻的刀闸状态、电池/太阳能、气象数据。
+   */
+  reportHistory(source: 'connect' | 'auto' | 'manual' = 'manual'): void {
+    if (!this.isOnline()) {
+      if (source === 'manual') this.deps.log(this.cfg.id, '当前未连接，历史整包发送被丢弃');
+      return;
+    }
+    this.sendStatus();
+    this.sendPower();
+    this.sendEnv();
+    this.lastHistoryAt = Date.now();
+    this.deps.log(this.cfg.id, `历史整包已上报（0x10 + 0x20 + 0x30，来源 ${source}）`);
+    this.notify();
   }
 
   /** 任意帧发送（帧构造器 / 手动发帧） */

@@ -7,6 +7,15 @@ export interface PowerTelemetry {
   pvCurrent: number;
 }
 
+export interface EnvTelemetry {
+  envTemp?: number;
+  envHumidity?: number;
+  cell1Temp?: number;
+  cell2Temp?: number;
+  acState?: number;
+  fireUsed?: boolean;
+}
+
 export interface FieldRow {
   label: string;
   value: string;
@@ -14,7 +23,19 @@ export interface FieldRow {
 }
 
 function u16(out: Uint8Array, offset: number, value: number): void {
-  const v = Math.max(0, Math.min(0xffff, Math.round(value)));
+  const v = Number.isFinite(value) ? Math.max(0, Math.min(0xffff, Math.round(value))) : 0xffff;
+  out[offset] = (v >> 8) & 0xff;
+  out[offset + 1] = v & 0xff;
+}
+
+/** 有符号 16 位（温度），无值按协议填 0xFFFF 表示数据异常 */
+function i16(out: Uint8Array, offset: number, value: number): void {
+  if (!Number.isFinite(value)) {
+    out[offset] = 0xff;
+    out[offset + 1] = 0xff;
+    return;
+  }
+  const v = Math.max(-32768, Math.min(32767, Math.round(value))) & 0xffff;
   out[offset] = (v >> 8) & 0xff;
   out[offset + 1] = v & 0xff;
 }
@@ -43,6 +64,26 @@ export function encodePower(t: PowerTelemetry): Uint8Array {
   return out;
 }
 
+/**
+ * 0x30 环境状态：16 字节。
+ * 温度单位 0.1℃（有符号），湿度 0.1%RH，空调状态 0~3，灭火装置 0=待用 1=已用。
+ * 未填写的温度/湿度按协议填 0xFFFF（数据异常）。
+ */
+export function encodeEnv(t: EnvTelemetry): Uint8Array {
+  const out = new Uint8Array(16);
+  const temp = (v: number | undefined) => (v === undefined ? Number.NaN : v * 10);
+  i16(out, 0, temp(t.envTemp));
+  u16(out, 2, t.envHumidity === undefined ? 0xffff : t.envHumidity * 10);
+  i16(out, 4, temp(t.cell1Temp));
+  i16(out, 6, temp(t.cell2Temp));
+  u16(out, 8, t.acState ?? 0xffff);
+  u16(out, 10, 0);
+  out[12] = 0;
+  out[13] = t.fireUsed ? 1 : 0;
+  u16(out, 14, 0);
+  return out;
+}
+
 export function decodePowerFields(data: Uint8Array): FieldRow[] {
   const rows: FieldRow[] = [
     { label: '锂电池剩余电量', value: `${rU16(data, 0)} %` },
@@ -64,18 +105,20 @@ export function summarizePower(data: Uint8Array): string {
 
 const AC_STATUS = ['未通电', '待机', '运行', '故障'];
 
-/** 0x30 环境状态：16 字节（本期不上报，仅解析展示） */
+/** 0x30 环境状态：16 字节 */
 export function decodeEnvFields(data: Uint8Array): FieldRow[] {
   const ac = rU16(data, 8);
   const alarmLo = rU16(data, 10);
   const alarmHi = data[12] ?? 0;
   const fire = data[13] ?? 0;
+  const temp = (offset: number) => (rU16(data, offset) === 0xffff ? '数据异常' : `${(rI16(data, offset) / 10).toFixed(1)} ℃`);
+  const hum = rU16(data, 2) === 0xffff ? '数据异常' : `${(rU16(data, 2) / 10).toFixed(1)} %RH`;
   return [
-    { label: '机柜内温度', value: `${(rI16(data, 0) / 10).toFixed(1)} ℃` },
-    { label: '机柜内湿度', value: `${(rU16(data, 2) / 10).toFixed(1)} %RH` },
-    { label: '电池舱 1 温度', value: `${(rI16(data, 4) / 10).toFixed(1)} ℃` },
-    { label: '电池舱 2 温度', value: `${(rI16(data, 6) / 10).toFixed(1)} ℃` },
-    { label: '空调状态', value: `${ac} · ${AC_STATUS[ac] ?? '未知'}` },
+    { label: '机柜内温度', value: temp(0) },
+    { label: '机柜内湿度', value: hum },
+    { label: '电池舱 1 温度', value: temp(4) },
+    { label: '电池舱 2 温度', value: temp(6) },
+    { label: '空调状态', value: ac === 0xffff ? '数据异常' : `${ac} · ${AC_STATUS[ac] ?? '未知'}` },
     { label: '空调告警 1~16', value: `0x${alarmLo.toString(16).padStart(4, '0')}` },
     { label: '空调告警 17', value: `${alarmHi & 1}` },
     { label: '灭火装置状态', value: fire ? `已用 0x${fire.toString(16)}` : '待用' },

@@ -49,8 +49,8 @@ export const api = {
     req<{ ok: boolean }>('POST', `/api/modules/${id}/telemetry`, patch),
   preset: (id: string, preset: 'initial' | 'melt') =>
     req<{ ok: boolean }>('POST', `/api/modules/${id}/preset`, { preset }),
-  report: (id: string, includePower = false) =>
-    req<{ ok: boolean }>('POST', `/api/modules/${id}/report`, { includePower }),
+  report: (id: string, opts: { includePower?: boolean; includeEnv?: boolean; history?: boolean } = {}) =>
+    req<{ ok: boolean }>('POST', `/api/modules/${id}/report`, opts),
   send: (id: string, payload: { hex?: string; type?: number; dataHex?: string; moduleId?: number }) =>
     req<{ ok: boolean; hex: string }>('POST', `/api/modules/${id}/send`, payload),
   exportConfig: () => req<unknown>('GET', '/api/config/export'),

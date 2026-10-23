@@ -2,12 +2,15 @@ import { useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
+  Check,
+  ChevronDown,
   Copy,
   GripVertical,
   Pencil,
   Power,
   RefreshCw,
   Send,
+  SlidersHorizontal,
   Trash2,
   Zap,
 } from 'lucide-react';
@@ -16,6 +19,7 @@ import { deviceButtons, deviceMeta, hasStatusBit } from '@/core/types';
 import { getProfile, KIND_LABEL, type DeviceState } from '@/protocol/bits';
 import { encodeFrame, toHexUpper } from '@/protocol/frame';
 import { api } from '@/web/lib/api';
+import { copyText } from '@/web/lib/clipboard';
 import { useStore } from '@/web/lib/store';
 import { Badge, Button, CounterChip, Input, Select, Stat, StatusPill, Switch, cn, type Tone } from './ui';
 
@@ -46,18 +50,20 @@ const TONE_IDLE: Record<string, string> = {
   melt: 'border-slate-200 bg-white text-rose-700 hover:border-rose-300 hover:bg-rose-50',
 };
 
-export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
+export default function ModuleCard({ m, onEdit }: { m: ModuleSnapshot; onEdit: () => void }) {
   const server = useStore((s) => s.state?.server);
   const run = useStore((s) => s.run);
   const toast = useStore((s) => s.toast);
   const [editTel, setEditTel] = useState(false);
   const [draft, setDraft] = useState<Telemetry>(m.telemetry);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [fallbackHex, setFallbackHex] = useState('');
 
   const autoOn = m.autoMode === 'on' || (m.autoMode === 'inherit' && !!server?.autoModeDefault);
   const link = LINK_STYLE[m.link];
 
-  const copyStatusFrame = () => {
+  const buildStatusHex = (): string => {
     const st = m.states;
     const profile = getProfile(m.protocol);
     const data = profile.encodeStatus({
@@ -75,23 +81,40 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
       batteryPercent: m.telemetry.batteryPercent,
       linkType: m.telemetry.linkType,
     });
-    const hex = toHexUpper(encodeFrame({ id: m.moduleId, type: 0x10, data }));
-    void navigator.clipboard.writeText(hex).then(
-      () => toast('已复制当前 0x10 帧'),
-      () => toast('复制失败，浏览器未授权剪贴板', 'error'),
+    return toHexUpper(encodeFrame({ id: m.moduleId, type: 0x10, data }));
+  };
+
+  const copyStatusFrame = () => {
+    const hex = buildStatusHex();
+    void copyText(hex).then(
+      () => {
+        setCopied(true);
+        setFallbackHex('');
+        setTimeout(() => setCopied(false), 1600);
+        toast(`已复制当前 0x10 帧：${hex}`);
+      },
+      () => {
+        // 兜底：自动复制被浏览器拒绝时，把十六进制摊出来让用户手动选中复制
+        setFallbackHex(hex);
+        toast('浏览器拒绝自动复制，已展开帧内容，请手动选中复制', 'error');
+      },
     );
   };
 
-  const openTel = () => {
+  const toggleTel = () => {
+    if (editTel) {
+      setEditTel(false);
+      return;
+    }
     setDraft(m.telemetry);
     setEditTel(true);
   };
 
-  const doReport = async (includePower: boolean) => {
+  const doReport = async (opts: { includePower?: boolean; includeEnv?: boolean; history?: boolean }, label: string) => {
     setBusy(true);
     try {
-      await api.report(m.id, includePower);
-      toast(includePower ? '已发送 0x10 + 0x20' : '已发送 0x10 状态帧');
+      await api.report(m.id, opts);
+      toast(label);
     } finally {
       setBusy(false);
     }
@@ -123,6 +146,13 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              title="修改模块信息（协议 / ID / 铁塔号 / 设备）"
+              className="rounded p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
+              onClick={onEdit}
+            >
+              <Pencil className="size-3.5" />
+            </button>
             <button
               title="重连"
               className="rounded p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
@@ -247,27 +277,82 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
         />
       </div>
 
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 pb-1 text-[10px] text-slate-400">
+        <span title="平台历史数据页依赖 0x10 + 0x20 + 0x30 这一整包">
+          历史整包 {m.lastHistoryAt ? relTime(m.lastHistoryAt) : '未发送'}
+        </span>
+        <span className={m.lastPowerAck ? 'text-emerald-600' : 'text-slate-300'} title="平台收到 0x20 后回 0x21">
+          0x20 {m.lastPowerAck ? '已应答' : '无应答'}
+        </span>
+        <span className={m.lastEnvAck ? 'text-emerald-600' : 'text-slate-300'} title="平台收到 0x30 后回 0x31">
+          0x30 {m.lastEnvAck ? '已应答' : '无应答'}
+        </span>
+      </div>
+
       <div className="flex items-center justify-between gap-2 px-3 py-2">
         <button
-          className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200"
-          onClick={openTel}
+          className={cn(
+            'inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] transition-colors hover:bg-slate-100 hover:text-slate-700 active:bg-slate-200',
+            editTel ? 'text-slate-700' : 'text-slate-500',
+          )}
+          title={editTel ? '收起遥测输入' : '展开遥测输入（电池 / 光伏 / 负载 / 环境）'}
+          onClick={toggleTel}
         >
-          <Pencil className="size-3" />
+          <SlidersHorizontal className="size-3" />
           遥测
+          <ChevronDown className={cn('size-3 transition-transform', editTel && 'rotate-180')} />
         </button>
         <div className="flex items-center gap-1">
-          <Button size="xs" variant="subtle" disabled={busy} onClick={() => void run(() => doReport(false))}>
+          <Button size="xs" variant="subtle" disabled={busy} title="发送 0x10 状态帧" onClick={() => void run(() => doReport({}, '已发送 0x10 状态帧'))}>
             <Send className="size-3" />
             上报
           </Button>
-          <Button size="xs" variant="ghost" disabled={busy} title="发送 0x20 供电帧" onClick={() => void run(() => doReport(true))}>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={busy}
+            title="发送 0x20 供电帧"
+            onClick={() => void run(() => doReport({ includePower: true }, '已发送 0x10 + 0x20'))}
+          >
             供电
           </Button>
-          <Button size="xs" variant="ghost" title="复制当前 0x10 帧" onClick={copyStatusFrame}>
-            <Copy className="size-3" />
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={busy}
+            title="立即补报历史整包：0x10 + 0x20 + 0x30"
+            onClick={() => void run(() => doReport({ history: true }, '已补报历史整包：0x10 + 0x20 + 0x30'))}
+          >
+            历史
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            title="复制当前 0x10 状态帧（可直接粘到帧构造器或抓包工具里比对）"
+            onClick={copyStatusFrame}
+          >
+            {copied ? <Check className="size-3 text-emerald-600" /> : <Copy className="size-3" />}
+            {copied ? '已复制' : '复制'}
           </Button>
         </div>
       </div>
+
+      {fallbackHex ? (
+        <div className="border-t border-slate-200 bg-slate-50 px-3 py-2">
+          <div className="mb-1 flex items-center justify-between text-[10px] text-slate-500">
+            <span>0x10 帧（点击输入框可全选）</span>
+            <button className="text-slate-400 hover:text-slate-700" onClick={() => setFallbackHex('')}>
+              收起
+            </button>
+          </div>
+          <input
+            readOnly
+            value={fallbackHex}
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full rounded border border-slate-200 bg-white px-1.5 py-1 font-mono text-[10px] text-slate-700"
+          />
+        </div>
+      ) : null}
 
       {editTel ? (
         <div className="border-t border-slate-200 bg-slate-50 px-3 py-2.5">
@@ -363,6 +448,71 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
                 />
               </div>
             )}
+          </div>
+          <div className="mt-2 border-t border-slate-200 pt-2">
+            <div className="mb-1 text-[10px] font-medium text-slate-500">环境状态（0x30）</div>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="text-[10px] text-slate-500">
+                机柜温度 ℃
+                <Input
+                  type="number"
+                  step={0.1}
+                  className="mt-0.5 h-7"
+                  value={draft.envTemp ?? ''}
+                  onChange={(e) => setDraft({ ...draft, envTemp: Number(e.target.value) })}
+                />
+              </label>
+              <label className="text-[10px] text-slate-500">
+                机柜湿度 %RH
+                <Input
+                  type="number"
+                  step={0.1}
+                  className="mt-0.5 h-7"
+                  value={draft.envHumidity ?? ''}
+                  onChange={(e) => setDraft({ ...draft, envHumidity: Number(e.target.value) })}
+                />
+              </label>
+              <label className="text-[10px] text-slate-500">
+                空调状态
+                <Select
+                  className="mt-0.5 h-7"
+                  value={draft.acState ?? 2}
+                  onChange={(e) => setDraft({ ...draft, acState: Number(e.target.value) })}
+                >
+                  <option value={0}>0 未通电</option>
+                  <option value={1}>1 待机</option>
+                  <option value={2}>2 运行</option>
+                  <option value={3}>3 故障</option>
+                </Select>
+              </label>
+              <label className="text-[10px] text-slate-500">
+                电池舱 1 温度 ℃
+                <Input
+                  type="number"
+                  step={0.1}
+                  className="mt-0.5 h-7"
+                  value={draft.cell1Temp ?? ''}
+                  onChange={(e) => setDraft({ ...draft, cell1Temp: Number(e.target.value) })}
+                />
+              </label>
+              <label className="text-[10px] text-slate-500">
+                电池舱 2 温度 ℃
+                <Input
+                  type="number"
+                  step={0.1}
+                  className="mt-0.5 h-7"
+                  value={draft.cell2Temp ?? ''}
+                  onChange={(e) => setDraft({ ...draft, cell2Temp: Number(e.target.value) })}
+                />
+              </label>
+              <div className="pt-4">
+                <Switch
+                  checked={!!draft.fireUsed}
+                  onChange={(v) => setDraft({ ...draft, fireUsed: v })}
+                  label="灭火装置已用"
+                />
+              </div>
+            </div>
           </div>
           <div className="mt-2 flex justify-end gap-1.5">
             <Button size="xs" variant="ghost" onClick={() => setEditTel(false)}>

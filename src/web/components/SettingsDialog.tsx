@@ -132,11 +132,35 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 onChange={(e) => set('powerIntervalSec', Number(e.target.value.replace(/[^\d]/g, '')) || 0)}
               />
             </Field>
+            <Field label="0x30 周期 (秒)" hint="协议范围 120~3600">
+              <Input
+                value={draft.envIntervalSec}
+                inputMode="numeric"
+                onChange={(e) => set('envIntervalSec', Number(e.target.value.replace(/[^\d]/g, '')) || 0)}
+              />
+            </Field>
             <Field label="命令 ACK (0x01)">
               <div className="pt-2">
                 <Switch checked={draft.ackCommand} onChange={(v) => set('ackCommand', v)} label="收到 0x00 立即应答" />
               </div>
             </Field>
+            <div className="col-span-2 flex flex-col justify-center gap-1 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+              <Switch
+                checked={draft.hourlyBundle}
+                onChange={(v) => set('hourlyBundle', v)}
+                label="每小时整包上报（0x10 + 0x20 + 0x30）"
+              />
+              <Switch
+                checked={draft.alignHourly}
+                onChange={(v) => set('alignHourly', v)}
+                label="整点对齐（每小时 :00:05）"
+                disabled={!draft.hourlyBundle}
+              />
+              <span className="text-[10px] leading-relaxed text-slate-400">
+                平台历史数据页需要的是一整组同时刻数据：刀闸状态 + 电池/太阳能 + 气象。开启后按 0x20 周期连发三帧；
+                关闭则 0x20、0x30 各自按自己的周期单独发。整点对齐可避免「连接时刻是 14:37，就永远在 :37 上报」。
+              </span>
+            </div>
           </div>
         </section>
 

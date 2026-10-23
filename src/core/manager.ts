@@ -14,7 +14,7 @@ import {
   type ModuleSnapshot,
   type ServerConfig,
 } from './types';
-import { defaultStates, type ProtocolId } from '../protocol/bits';
+import { defaultStates, getProfile, type ProtocolId } from '../protocol/bits';
 
 interface PersistShape {
   version: number;
@@ -105,11 +105,14 @@ export class Manager {
     autoConnect?: boolean;
   }): ModuleSnapshot {
     const moduleId = clamp(Number(input.moduleId), 0, 4095);
+    this.assertModuleIdFree(moduleId, null);
     const protocol: ProtocolId = input.protocol === 'mg500' ? 'mg500' : 'mg400';
     const requestedPhaseCount = clamp(Number(input.phaseCount ?? 2), 0, 4);
-    const devices = input.devices?.length
-      ? [...input.devices]
-      : orderDevices(defaultDevices(protocol, requestedPhaseCount));
+    const allowed = new Set(getProfile(protocol).devices);
+    const devices = (
+      input.devices?.length ? [...input.devices] : orderDevices(defaultDevices(protocol, requestedPhaseCount))
+    ).filter((key) => allowed.has(key));
+    if (!devices.length) devices.push(...orderDevices(defaultDevices(protocol, requestedPhaseCount)));
     const phaseCount = countPhases(devices);
     const cfg: ModuleConfig = normalizeModule({
       id: randomUUID(),
@@ -139,6 +142,7 @@ export class Manager {
   updateModule(id: string, patch: Partial<ModuleConfig>): ModuleSnapshot | null {
     const session = this.sessions.get(id);
     if (!session) return null;
+    if (patch.moduleId !== undefined) this.assertModuleIdFree(clamp(Number(patch.moduleId), 0, 4095), id);
     const next: ModuleConfig = {
       ...session.cfg,
       ...patch,
@@ -148,20 +152,43 @@ export class Manager {
     };
     next.moduleId = clamp(Number(next.moduleId), 0, 4095);
     next.protocol = next.protocol === 'mg500' ? 'mg500' : 'mg400';
-    if (patch.devices) {
-      next.phaseCount = countPhases(next.devices);
-      // 补齐新增设备的默认状态
-      const defaults = defaultStates(next.phaseCount);
-      for (const key of next.devices) {
-        if (!next.states[key]) next.states[key] = defaults[key] ?? 'closed';
-      }
-    } else {
-      next.phaseCount = clamp(Number(next.phaseCount), 0, 4);
+    next.towerName = (next.towerName ?? '').trim() || `铁塔 ${next.moduleId}`;
+
+    // 按协议过滤设备：切到 MG400 时不能保留接地刀闸 2 / 选相 3 / 活化
+    const profile = getProfile(next.protocol);
+    const allowed = new Set(profile.devices);
+    const filtered = [...new Set(next.devices.filter((key) => allowed.has(key)))];
+    if (filtered.length === 0) filtered.push(...defaultDevices(next.protocol, Math.min(2, profile.maxPhases)));
+    // 保留用户自定义顺序（拖动 / 对话框里的上下移动），不要重新排序
+    next.devices = filtered;
+    next.phaseCount = countPhases(next.devices);
+
+    const defaults = defaultStates(next.phaseCount);
+    for (const key of next.devices) {
+      if (!next.states[key]) next.states[key] = defaults[key] ?? 'closed';
     }
+    // 删掉已不在设备清单里的状态，避免切换协议后残留
+    for (const key of Object.keys(next.states)) {
+      if (!next.devices.includes(key)) delete next.states[key];
+    }
+
+    const changedId = next.moduleId !== session.cfg.moduleId;
     session.cfg = next;
     this.saveDebounced();
     this.scheduleBroadcast();
+    this.log(id, `修改模块信息：#${next.moduleId} ${next.towerName}（${next.protocol.toUpperCase()}）`);
+    if (changedId && session.link === 'online') {
+      this.log(id, '模块 ID 已变更，建议重连一次让平台重新绑定');
+    }
     return session.snapshot();
+  }
+
+  private assertModuleIdFree(moduleId: number, selfId: string | null): void {
+    for (const [id, session] of this.sessions) {
+      if (id !== selfId && session.cfg.moduleId === moduleId) {
+        throw new Error(`模块 ID ${moduleId} 已被「${session.cfg.towerName}」占用`);
+      }
+    }
   }
 
   deleteModule(id: string): boolean {
@@ -246,11 +273,17 @@ export class Manager {
     this.saveDebounced();
   }
 
-  report(id: string, includePower = false): void {
+  report(id: string, includePower = false, includeEnv = false): void {
     const session = this.sessions.get(id);
     if (!session) return;
     session.sendStatus();
     if (includePower) session.sendPower();
+    if (includeEnv) session.sendEnv();
+  }
+
+  /** 历史整包：0x10 + 0x20 + 0x30 */
+  reportHistory(id: string): void {
+    this.sessions.get(id)?.reportHistory('manual');
   }
 
   sendRaw(id: string, bytes: Uint8Array): void {
@@ -260,6 +293,9 @@ export class Manager {
   updateServer(patch: Partial<ServerConfig>): ServerConfig {
     this.server = { ...this.server, ...patch };
     this.server.port = clamp(Number(this.server.port), 1, 65535);
+    this.server.statusIntervalSec = clamp(Number(this.server.statusIntervalSec), 5, 3600);
+    this.server.powerIntervalSec = clamp(Number(this.server.powerIntervalSec), 30, 86400);
+    this.server.envIntervalSec = clamp(Number(this.server.envIntervalSec), 120, 3600);
     for (const s of this.sessions.values()) s.applyServerConfig();
     this.log(null, `服务器参数更新：${this.server.host}:${this.server.port}`);
     this.saveDebounced();

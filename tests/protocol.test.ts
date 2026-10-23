@@ -12,7 +12,7 @@ import {
   type StatusSnapshot,
 } from '../src/protocol/bits';
 import { deviceButtons, orderDevices, presetStates } from '../src/core/types';
-import { encodePower } from '../src/protocol/power';
+import { decodeEnvFields, encodeEnv, encodePower } from '../src/protocol/power';
 import { describe as describeFrame } from '../src/protocol/describe';
 
 const DEFAULT_STATUS: StatusSnapshot = {
@@ -378,5 +378,33 @@ describe('MG500 协议', () => {
     expect(getProfile('mg500').hasActivation).toBe(false);
     expect(getProfile('mg500').maxPhases).toBe(3);
     expect(getProfile('mg400').maxPhases).toBe(2);
+  });
+});
+
+describe('0x30 环境状态', () => {
+  it('16 字节：温度 0.1℃ 有符号、湿度 0.1%RH、空调状态', () => {
+    const data = encodeEnv({
+      envTemp: 25.3,
+      envHumidity: 61.2,
+      cell1Temp: -5,
+      cell2Temp: 30,
+      acState: 2,
+      fireUsed: false,
+    });
+    expect(data.length).toBe(16);
+    expect([...data.slice(0, 10)]).toEqual([0x00, 0xfd, 0x02, 0x64, 0xff, 0xce, 0x01, 0x2c, 0x00, 0x02]);
+    expect(data[13]).toBe(0);
+  });
+
+  it('未填写的温度/湿度按协议填 0xFFFF（数据异常）', () => {
+    const data = encodeEnv({});
+    expect([...data.slice(0, 4)]).toEqual([0xff, 0xff, 0xff, 0xff]);
+    const rows = decodeEnvFields(data);
+    expect(rows[0].value).toBe('数据异常');
+    expect(rows[1].value).toBe('数据异常');
+  });
+
+  it('灭火装置已用时 Byte13 = 1', () => {
+    expect(encodeEnv({ fireUsed: true })[13]).toBe(1);
   });
 });
