@@ -13,6 +13,11 @@ export interface ServerConfig {
   powerIntervalSec: number;
   /** 0x30 环境状态上报周期（秒），协议要求 120~3600 */
   envIntervalSec: number;
+  /**
+   * 是否上报 0x30 环境帧。默认关闭：
+   * 实测本平台收到 0x30 会在 30ms 内断开 TCP 连接（2026-10-24 用未占用 ID 复现）。
+   */
+  envReport: boolean;
   /** 每小时把 0x10 + 0x20 + 0x30 连成一包上报（平台历史数据依赖整包） */
   hourlyBundle: boolean;
   /** 整包对齐到整点（每小时 :00:05），而不是从连接时刻起算 */
@@ -35,6 +40,7 @@ export const DEFAULT_SERVER: ServerConfig = {
   statusIntervalSec: 60,
   powerIntervalSec: 3600,
   envIntervalSec: 3600,
+  envReport: false,
   hourlyBundle: true,
   alignHourly: true,
   autoModeDefault: false,

@@ -132,13 +132,10 @@ async function main() {
   assert(firstDi.data[0] & 0x01, '默认状态：接地刀闸应为合闸位');
   assert(firstDi.data[0] & 0x04, '默认状态：融冰锁应为闭锁位');
   assert(received.some((f) => f.type === 0x20), '连接后应发送 0x20 供电帧');
-  const firstEnv = received.find((f) => f.type === 0x30);
-  assert(firstEnv, '连接后应发送 0x30 环境帧');
-  assert(firstEnv.data.length === 16, '0x30 数据区应为 16 字节');
+  assert(!received.some((f) => f.type === 0x30), '默认不应发送 0x30：本平台收到会断开连接');
   let stConn = (await req('GET', '/api/state')).modules.find((x) => x.id === mod.id);
   assert(stConn.lastHistoryAt, '连接后应记录一次历史整包时间');
   assert(stConn.lastPowerAck, '平台回 0x21 后应记录 0x20 应答时间');
-  assert(stConn.lastEnvAck, '平台回 0x31 后应记录 0x30 应答时间');
 
   // 平台下发「接地刀闸分闸」
   terminal.write(build(MODULE_ID, 0x00, [0x00, 0x40]));
@@ -233,16 +230,24 @@ async function main() {
   assert(dupRejected, '重复模块 ID 应被拒绝');
   log('✓ 模块信息可编辑 断言通过');
 
-  // 历史整包：0x10 + 0x20 + 0x30 连续三帧
+  // 历史整包：默认 0x10 + 0x20（0x30 默认关闭，平台收到会断开）
   const beforeHistory = received.length;
   await req('POST', `/api/modules/${mod.id}/report`, { history: true });
   await sleep(500);
   const historyTypes = received.slice(beforeHistory).map((f) => f.type);
-  assert(
-    historyTypes.includes(0x10) && historyTypes.includes(0x20) && historyTypes.includes(0x30),
-    '历史整包应包含 0x10 / 0x20 / 0x30',
-  );
-  log('✓ 历史整包（0x10 + 0x20 + 0x30）断言通过');
+  assert(historyTypes.includes(0x10) && historyTypes.includes(0x20), '历史整包应包含 0x10 / 0x20');
+  assert(!historyTypes.includes(0x30), '默认历史整包不应带 0x30');
+  log('✓ 历史整包（0x10 + 0x20）断言通过');
+
+  // 手动打开 0x30 后才允许上报环境帧
+  await req('PUT', '/api/server', { envReport: true });
+  const beforeEnv = received.length;
+  await req('POST', `/api/modules/${mod.id}/report`, { history: true });
+  await sleep(500);
+  const envTypes = received.slice(beforeEnv).map((f) => f.type);
+  assert(envTypes.includes(0x30), '打开 envReport 后历史整包应包含 0x30');
+  await req('PUT', '/api/server', { envReport: false });
+  log('✓ 0x30 开关（默认关 / 手动开）断言通过');
 
   // MG500：多一个接地刀闸、一个选相，0x10 位定义不同
   const mod3 = await req('POST', '/api/modules', {

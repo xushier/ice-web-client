@@ -148,7 +148,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
               <Switch
                 checked={draft.hourlyBundle}
                 onChange={(v) => set('hourlyBundle', v)}
-                label="每小时整包上报（0x10 + 0x20 + 0x30）"
+                label="每小时整包上报（0x10 + 0x20）"
               />
               <Switch
                 checked={draft.alignHourly}
@@ -156,9 +156,14 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 label="整点对齐（每小时 :00:05）"
                 disabled={!draft.hourlyBundle}
               />
+              <Switch
+                checked={draft.envReport}
+                onChange={(v) => set('envReport', v)}
+                label="同时上报 0x30 环境帧（实测本平台会断开，默认关闭）"
+              />
               <span className="text-[10px] leading-relaxed text-slate-400">
-                平台历史数据页需要的是一整组同时刻数据：刀闸状态 + 电池/太阳能 + 气象。开启后按 0x20 周期连发三帧；
-                关闭则 0x20、0x30 各自按自己的周期单独发。整点对齐可避免「连接时刻是 14:37，就永远在 :37 上报」。
+                平台历史数据页需要的是一整组同时刻数据：刀闸状态 + 电池/太阳能。开启整包后按 0x20 周期连发两帧；
+                关闭则各自按自己的周期单独发。整点对齐可避免「连接时刻是 14:37，就永远在 :37 上报」。
               </span>
             </div>
           </div>

@@ -1,6 +1,6 @@
 {
   "name": "ice-web-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "MG400 远程地线融冰控制系统 — 主控机柜终端模拟器（Web / Docker）",

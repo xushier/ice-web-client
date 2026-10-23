@@ -47,6 +47,7 @@ export class ModuleSession {
   lastHistoryAt: number | null = null;
   lastPowerAck: number | null = null;
   lastEnvAck: number | null = null;
+  lastTxType: number | null = null;
 
   private sock: net.Socket | null = null;
   private decoder = new FrameDecoder();
@@ -176,7 +177,7 @@ export class ModuleSession {
       this.scheduleNextBundle();
     } else {
       this.powerTimer = setInterval(() => this.sendPower(), powerMs);
-      this.envTimer = setInterval(() => this.sendEnv(), envMs);
+      if (srv.envReport) this.envTimer = setInterval(() => this.sendEnv(), envMs);
     }
   }
 
@@ -224,7 +225,8 @@ export class ModuleSession {
     this.clearAutoTimers();
     this.pending = [];
     if (!this.closedByUser && lived > 0 && lived < 1500) {
-      this.error = '服务端立即断开：该模块 ID 可能已有其他会话在线';
+      const last = this.lastTxType === null ? '' : `，最后发送 0x${this.lastTxType.toString(16).padStart(2, '0')}`;
+      this.error = `服务端在连接后 ${lived}ms 主动断开${last}。可能是该模块 ID 已有其他会话在线，或平台不接受该帧类型`;
     }
     if (this.link !== 'idle') this.link = this.closedByUser ? 'idle' : 'offline';
     this.sock = null;
@@ -484,23 +486,25 @@ export class ModuleSession {
 
   sendEnv(): void {
     if (!this.isOnline()) return;
+    if (!this.deps.server().envReport) return;
     this.sendFrame(FT.ENV, encodeEnv(this.cfg.telemetry));
   }
 
   /**
-   * 历史整包：0x10 + 0x20 + 0x30 连续发送。
-   * 平台历史数据页需要同一时刻的刀闸状态、电池/太阳能、气象数据。
+   * 历史整包：0x10 + 0x20（开启 0x30 上报时再加环境帧）连续发送。
+   * 平台历史数据页需要同一时刻的刀闸状态与电池/太阳能数据。
    */
   reportHistory(source: 'connect' | 'auto' | 'manual' = 'manual'): void {
     if (!this.isOnline()) {
       if (source === 'manual') this.deps.log(this.cfg.id, '当前未连接，历史整包发送被丢弃');
       return;
     }
+    const withEnv = this.deps.server().envReport;
     this.sendStatus();
     this.sendPower();
-    this.sendEnv();
+    if (withEnv) this.sendEnv();
     this.lastHistoryAt = Date.now();
-    this.deps.log(this.cfg.id, `历史整包已上报（0x10 + 0x20 + 0x30，来源 ${source}）`);
+    this.deps.log(this.cfg.id, `历史整包已上报（0x10 + 0x20${withEnv ? ' + 0x30' : ''}，来源 ${source}）`);
     this.notify();
   }
 
@@ -529,6 +533,7 @@ export class ModuleSession {
     if (!sock || sock.destroyed) return;
     sock.write(Buffer.from(raw));
     this.lastTx = Date.now();
+    this.lastTxType = raw[5] ?? null;
     this.txCount += 1;
     this.deps.onFrame({
       ts: this.lastTx,

@@ -282,14 +282,11 @@ export default function ModuleCard({ m, onEdit }: { m: ModuleSnapshot; onEdit: (
       </div>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 pb-1 text-[10px] text-slate-400">
-        <span title="平台历史数据页依赖 0x10 + 0x20 + 0x30 这一整包">
+        <span title="平台历史数据页依赖 0x10 + 0x20 这一整包">
           历史整包 {m.lastHistoryAt ? relTime(m.lastHistoryAt) : '未发送'}
         </span>
-        <span className={m.lastPowerAck ? 'text-emerald-600' : 'text-slate-300'} title="平台收到 0x20 后回 0x21">
-          0x20 {m.lastPowerAck ? '已应答' : '无应答'}
-        </span>
-        <span className={m.lastEnvAck ? 'text-emerald-600' : 'text-slate-300'} title="平台收到 0x30 后回 0x31">
-          0x30 {m.lastEnvAck ? '已应答' : '无应答'}
+        <span className={m.lastRx ? 'text-emerald-600' : 'text-slate-300'} title="平台最近一次回帧（本平台对任何帧都回 0x11 心跳）">
+          平台回包 {m.lastRx ? relTime(m.lastRx) : '无'}
         </span>
       </div>
 
@@ -324,8 +321,15 @@ export default function ModuleCard({ m, onEdit }: { m: ModuleSnapshot; onEdit: (
             size="xs"
             variant="ghost"
             disabled={busy}
-            title="立即补报历史整包：0x10 + 0x20 + 0x30"
-            onClick={() => void run(() => doReport({ history: true }, '已补报历史整包：0x10 + 0x20 + 0x30'))}
+            title={server?.envReport ? '立即补报历史整包：0x10 + 0x20 + 0x30' : '立即补报历史整包：0x10 + 0x20'}
+            onClick={() =>
+              void run(() =>
+                doReport(
+                  { history: true },
+                  server?.envReport ? '已补报历史整包：0x10 + 0x20 + 0x30' : '已补报历史整包：0x10 + 0x20',
+                ),
+              )
+            }
           >
             历史
           </Button>
@@ -454,7 +458,10 @@ export default function ModuleCard({ m, onEdit }: { m: ModuleSnapshot; onEdit: (
             )}
           </div>
           <div className="mt-2 border-t border-slate-200 pt-2">
-            <div className="mb-1 text-[10px] font-medium text-slate-500">环境状态（0x30）</div>
+            <div className="mb-1 text-[10px] font-medium text-slate-500">
+              环境状态（0x30）
+              <span className="ml-1 font-normal text-amber-600">默认不上报：本平台收到 0x30 会断开连接</span>
+            </div>
             <div className="grid grid-cols-3 gap-2">
               <label className="text-[10px] text-slate-500">
                 机柜温度 ℃
