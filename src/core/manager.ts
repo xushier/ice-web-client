@@ -4,10 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { ModuleSession, type SessionDeps } from './session';
 import {
   DEFAULT_SERVER,
-  INITIAL_STATE,
-  MELT_STATE,
   deviceMeta,
   orderDevices,
+  presetStates,
   randomTelemetry,
   type AppState,
   type FrameEntry,
@@ -15,7 +14,7 @@ import {
   type ModuleSnapshot,
   type ServerConfig,
 } from './types';
-import { defaultStates } from '../protocol/bits';
+import { defaultStates, type ProtocolId } from '../protocol/bits';
 
 interface PersistShape {
   version: number;
@@ -96,6 +95,7 @@ export class Manager {
   /* ------------------------------------------------------------- 模块增删改 */
 
   createModule(input: {
+    protocol?: ProtocolId;
     towerName?: string;
     moduleId: number;
     phaseCount?: number;
@@ -105,13 +105,15 @@ export class Manager {
     autoConnect?: boolean;
   }): ModuleSnapshot {
     const moduleId = clamp(Number(input.moduleId), 0, 4095);
+    const protocol: ProtocolId = input.protocol === 'mg500' ? 'mg500' : 'mg400';
     const requestedPhaseCount = clamp(Number(input.phaseCount ?? 2), 0, 4);
     const devices = input.devices?.length
       ? [...input.devices]
-      : orderDevices(defaultDevices(requestedPhaseCount));
+      : orderDevices(defaultDevices(protocol, requestedPhaseCount));
     const phaseCount = countPhases(devices);
     const cfg: ModuleConfig = normalizeModule({
       id: randomUUID(),
+      protocol,
       towerName: (input.towerName ?? '').trim() || `铁塔 ${moduleId}`,
       moduleId,
       phaseCount,
@@ -124,7 +126,10 @@ export class Manager {
     const session = new ModuleSession(cfg, this.deps);
     this.sessions.set(cfg.id, session);
     this.frames.set(cfg.id, []);
-    this.log(cfg.id, `新建模块 #${cfg.moduleId}（${devices.map((k) => deviceMeta(k).name).join('、')}）`);
+    this.log(
+      cfg.id,
+      `新建模块 #${cfg.moduleId}（${protocol.toUpperCase()}：${devices.map((k) => deviceMeta(k).name).join('、')}）`,
+    );
     this.saveNow();
     this.scheduleBroadcast();
     if (cfg.autoConnect) session.connect();
@@ -142,6 +147,7 @@ export class Manager {
       telemetry: { ...session.cfg.telemetry, ...(patch.telemetry ?? {}) },
     };
     next.moduleId = clamp(Number(next.moduleId), 0, 4095);
+    next.protocol = next.protocol === 'mg500' ? 'mg500' : 'mg400';
     if (patch.devices) {
       next.phaseCount = countPhases(next.devices);
       // 补齐新增设备的默认状态
@@ -235,7 +241,7 @@ export class Manager {
   setPreset(id: string, preset: 'initial' | 'melt'): void {
     const session = this.sessions.get(id);
     if (!session) return;
-    session.applyPreset(preset === 'initial' ? INITIAL_STATE : MELT_STATE);
+    session.applyPreset(presetStates(session.cfg.devices, preset));
     this.log(id, `一键${preset === 'initial' ? '初始态' : '融冰态'}`);
     this.saveDebounced();
   }
@@ -326,10 +332,9 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(n)));
 }
 
-function defaultDevices(phaseCount: number): string[] {
-  const devices = ['ground', 'ice', 'lock'];
+function defaultDevices(protocol: ProtocolId, phaseCount: number): string[] {
+  const devices = protocol === 'mg500' ? ['ground', 'ground2', 'ice', 'lock'] : ['ground', 'ice', 'lock'];
   for (let i = 1; i <= phaseCount; i++) devices.push(`phase${i}`);
-  devices.push('activation');
   return devices;
 }
 
@@ -338,13 +343,15 @@ function countPhases(devices: string[]): number {
 }
 
 function normalizeModule(cfg: ModuleConfig): ModuleConfig {
+  const protocol: ProtocolId = cfg.protocol === 'mg500' ? 'mg500' : 'mg400';
   const phaseCount = clamp(Number(cfg.phaseCount ?? 2), 0, 4);
-  const devices = cfg.devices?.length ? cfg.devices : defaultDevices(phaseCount);
+  const devices = cfg.devices?.length ? cfg.devices : defaultDevices(protocol, phaseCount);
   const defaults = defaultStates(phaseCount);
   const states: Record<string, string> = {};
   for (const key of devices) states[key] = cfg.states?.[key] ?? defaults[key] ?? 'closed';
   return {
     id: cfg.id ?? randomUUID(),
+    protocol,
     towerName: cfg.towerName ?? '',
     moduleId: clamp(Number(cfg.moduleId ?? 0), 0, 4095),
     phaseCount,

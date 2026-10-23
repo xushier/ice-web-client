@@ -2,7 +2,7 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { FrameDecoder, FT, decodeFrame, encodeFrame } from '../protocol/frame';
 import { describe } from '../protocol/describe';
-import { decodeCommand, encodeStatus, type DeviceState } from '../protocol/bits';
+import { decodeCommand, getProfile, type DeviceState } from '../protocol/bits';
 import { encodePower } from '../protocol/power';
 import type { FrameEntry, LinkState, ModuleConfig, ModuleSnapshot, PendingAction, ServerConfig } from './types';
 import { deviceMeta } from './types';
@@ -230,7 +230,7 @@ export class ModuleSession {
     for (const frame of frames) {
       this.lastRx = Date.now();
       this.rxCount += 1;
-      const parsed = describe(frame);
+      const parsed = describe(frame, this.cfg.protocol);
       this.deps.onFrame({
         ts: this.lastRx,
         moduleId: this.cfg.id,
@@ -250,9 +250,10 @@ export class ModuleSession {
   private handleCommand(data: Uint8Array): void {
     const srv = this.deps.server();
     if (srv.ackCommand) this.sendFrame(FT.CMD_ACK, [0x00]);
-    const { actions, allZero } = decodeCommand(data);
-    // 约定：数据区全 0（5A470500xx00 0000****）表示电池活化关闭
-    if (allZero) {
+    const profile = getProfile(this.cfg.protocol);
+    const { actions, allZero } = decodeCommand(data, profile);
+    // 约定：数据区全 0（5A470500xx00 0000****）表示电池活化关闭（仅 MG400 有活化指令）
+    if (allZero && profile.hasActivation) {
       if (this.cfg.devices.includes('activation')) {
         actions.push({ slot: 'activation', kind: 'off', label: '电池活化 关闭（数据区全 0）' });
       } else {
@@ -293,10 +294,6 @@ export class ModuleSession {
   }
 
   private keyForSlot(slot: string): string | null {
-    if (slot === 'phase1' || slot === 'phase2') {
-      const idx = slot === 'phase1' ? 1 : 2;
-      if (this.cfg.phaseCount < idx) return null;
-    }
     return this.cfg.devices.includes(slot) ? slot : null;
   }
 
@@ -401,16 +398,21 @@ export class ModuleSession {
   sendStatus(): void {
     if (!this.isOnline()) return;
     const st = this.cfg.states;
-    const data = encodeStatus({
+    const profile = getProfile(this.cfg.protocol);
+    const data = profile.encodeStatus({
       ground: (st.ground as DeviceState) ?? 'closed',
+      ground2: st.ground2 as DeviceState | undefined,
       ice: (st.ice as DeviceState) ?? 'open',
       lock: (st.lock as DeviceState) ?? 'locked',
-      phases: [(st.phase1 as DeviceState) ?? 'open', (st.phase2 as DeviceState) ?? 'open'],
+      phases: [
+        (st.phase1 as DeviceState) ?? 'open',
+        (st.phase2 as DeviceState) ?? 'open',
+        (st.phase3 as DeviceState) ?? 'open',
+      ],
       controlMode: this.cfg.telemetry.controlMode,
       networkError: this.cfg.telemetry.networkError,
       batteryPercent: this.cfg.telemetry.batteryPercent,
-      activation: (st.activation as 'on' | 'off') ?? 'off',
-      activationBit: this.deps.server().activationStatusBit,
+      linkType: this.cfg.telemetry.linkType,
     });
     this.sendFrame(FT.DI, data);
   }

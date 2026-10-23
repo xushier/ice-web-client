@@ -26,6 +26,7 @@ const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
 function stripRuntime(m: ModuleConfig): ModuleConfig {
   return {
     id: m.id,
+    protocol: m.protocol,
     towerName: m.towerName,
     moduleId: m.moduleId,
     phaseCount: m.phaseCount,

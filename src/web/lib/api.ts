@@ -20,6 +20,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 }
 
 export type CreateModuleInput = {
+  protocol?: 'mg400' | 'mg500';
   towerName?: string;
   moduleId: number;
   phaseCount?: number;

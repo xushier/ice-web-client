@@ -1,4 +1,4 @@
-import type { ActivationStatusBit, CommandKind } from '../protocol/bits';
+import type { CommandKind, ProtocolId } from '../protocol/bits';
 import type { ParsedFrame } from '../protocol/describe';
 
 export interface ServerConfig {
@@ -17,8 +17,6 @@ export interface ServerConfig {
   autoParallel: boolean;
   /** 收到 0x00 后立即回 0x01 */
   ackCommand: boolean;
-  /** 0x10 里活化状态占用的位：b1（默认，与命令帧同位）/ b0 / none（不上报，保留 4 档电量） */
-  activationStatusBit: ActivationStatusBit;
 }
 
 export const DEFAULT_SERVER: ServerConfig = {
@@ -35,7 +33,6 @@ export const DEFAULT_SERVER: ServerConfig = {
   autoJitterMs: 0,
   autoParallel: false,
   ackCommand: true,
-  activationStatusBit: 'b1',
 };
 
 export interface Telemetry {
@@ -47,12 +44,16 @@ export interface Telemetry {
   loadCurrent: number;
   controlMode: 'remote' | 'local';
   networkError: boolean;
+  /** MG500 才有：通信链路上报（0=4G / 1=光纤） */
+  linkType?: '4g' | 'fiber';
 }
 
 export type AutoMode = 'inherit' | 'on' | 'off';
 
 export interface ModuleConfig {
   id: string;
+  /** 该模块使用的协议：mg400 / mg500 */
+  protocol: ProtocolId;
   towerName: string;
   /** 写入帧 ID 字段的 12bit 原值（bit0 = 大小号侧） */
   moduleId: number;
@@ -111,6 +112,7 @@ export interface DeviceMeta {
 
 export function deviceMeta(key: string): DeviceMeta {
   if (key === 'ground') return { name: '接地刀闸', kind: 'switch' };
+  if (key === 'ground2') return { name: '接地刀闸 2', kind: 'switch' };
   if (key === 'ice') return { name: '融冰刀闸', kind: 'switch' };
   if (key === 'lock') return { name: '融冰锁', kind: 'lock' };
   if (key === 'activation') return { name: '电池活化', kind: 'activation' };
@@ -172,7 +174,7 @@ export function deviceButtons(key: string, current: string | undefined): DeviceB
     ];
   }
 
-  const leftIsClosed = kind === 'switch' && key === 'ground';
+  const leftIsClosed = kind === 'switch' && (key === 'ground' || key === 'ground2');
   const mid: DeviceButton = leftIsClosed
     ? cur === 'open' || cur === 'closing'
       ? { value: 'closing', label: '合闸中', tone: 'moving' }
@@ -197,6 +199,7 @@ export function deviceButtons(key: string, current: string | undefined): DeviceB
 /** 初始态（最左列）：接地合、选相分、锁闭锁、融冰分、活化关 */
 export const INITIAL_STATE: Record<string, string> = {
   ground: 'closed',
+  ground2: 'closed',
   ice: 'open',
   lock: 'locked',
   activation: 'off',
@@ -205,19 +208,38 @@ export const INITIAL_STATE: Record<string, string> = {
 /** 融冰态（最右列）：接地分、选相合、锁开、融冰合 */
 export const MELT_STATE: Record<string, string> = {
   ground: 'open',
+  ground2: 'open',
   ice: 'closed',
   lock: 'unlocked',
 };
+
+/**
+ * 生成一份完整的一键预设状态表（含选相刀闸）。
+ * 初始态：选相分闸到位；融冰态：选相合闸到位。
+ */
+export function presetStates(devices: string[], preset: 'initial' | 'melt'): Record<string, string> {
+  const base = preset === 'initial' ? INITIAL_STATE : MELT_STATE;
+  const out: Record<string, string> = {};
+  for (const key of devices) {
+    if (key.startsWith('phase')) {
+      out[key] = preset === 'initial' ? 'open' : 'closed';
+    } else if (base[key]) {
+      out[key] = base[key];
+    }
+  }
+  return out;
+}
 
 /** 默认展示顺序：接地刀闸 → 选相刀闸(1..n) → 融冰锁 → 融冰刀闸 → 电池活化 */
 export function orderDevices(keys: string[]): string[] {
   const rank = (key: string): number => {
     if (key === 'ground') return 0;
-    if (key.startsWith('phase')) return 1;
-    if (key === 'lock') return 2;
-    if (key === 'ice') return 3;
-    if (key === 'activation') return 4;
-    return 5;
+    if (key === 'ground2') return 1;
+    if (key.startsWith('phase')) return 2;
+    if (key === 'lock') return 3;
+    if (key === 'ice') return 4;
+    if (key === 'activation') return 5;
+    return 6;
   };
   return [...keys].sort((a, b) => {
     const d = rank(a) - rank(b);
@@ -228,9 +250,12 @@ export function orderDevices(keys: string[]): string[] {
   });
 }
 
-/** 0x10 状态帧里有对应位的设备（选相 3 个以上没有位定义） */
-export function hasStatusBit(key: string): boolean {
-  return key !== 'activation' && !/^phase([3-9]|\d{2,})$/.test(key);
+/** 该协议下 0x10 状态帧里是否有对应位 */
+export function hasStatusBit(key: string, protocol: ProtocolId = 'mg400'): boolean {
+  if (key === 'activation') return false;
+  if (key === 'ground2') return protocol === 'mg500';
+  if (key === 'phase3') return protocol === 'mg500';
+  return !/^phase([4-9]|\d{2,})$/.test(key);
 }
 
 function randStep(min: number, max: number, step: number): number {
@@ -249,5 +274,6 @@ export function randomTelemetry(): Telemetry {
     loadCurrent: randStep(0.3, 0.8, 0.01),
     controlMode: 'remote',
     networkError: false,
+    linkType: '4g',
   };
 }

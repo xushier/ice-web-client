@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Send } from 'lucide-react';
 import type { ModuleSnapshot } from '@/core/types';
-import { COMMAND_BITS, STATUS_BITS, encodeStatus } from '@/protocol/bits';
+import { getProfile } from '@/protocol/bits';
 import { decodeFrame, encodeFrame, parseHex, toHexUpper } from '@/protocol/frame';
 import { describe } from '@/protocol/describe';
 import { encodePower } from '@/protocol/power';
@@ -28,7 +28,6 @@ const TYPES: Array<{ value: number; label: string; dataLen: number }> = [
 
 export default function FrameBuilder({ open, onClose }: { open: boolean; onClose: () => void }) {
   const modules = useStore((s) => s.state?.modules) ?? [];
-  const server = useStore((s) => s.state?.server);
   const run = useStore((s) => s.run);
   const toast = useStore((s) => s.toast);
 
@@ -42,6 +41,7 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
   const [dataHex, setDataHex] = useState('00');
 
   const target = modules.find((m) => m.id === targetId) ?? modules[0] ?? null;
+  const profile = getProfile(target?.protocol);
 
   useEffect(() => {
     if (!targetId && modules[0]) setTargetId(modules[0].id);
@@ -112,19 +112,21 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
   };
 
   const fillFromModule = (m: ModuleSnapshot) => {
-    const data = encodeStatus({
+    const p = getProfile(m.protocol);
+    const data = p.encodeStatus({
       ground: (m.states.ground as 'open' | 'closed') ?? 'closed',
+      ground2: m.states.ground2 as 'open' | 'closed' | undefined,
       ice: (m.states.ice as 'open' | 'closed') ?? 'open',
       lock: (m.states.lock as 'locked' | 'unlocked') ?? 'locked',
       phases: [
-        (m.states.phase1 as 'open' | 'closed') ?? 'closed',
-        (m.states.phase2 as 'open' | 'closed') ?? 'closed',
+        (m.states.phase1 as 'open' | 'closed') ?? 'open',
+        (m.states.phase2 as 'open' | 'closed') ?? 'open',
+        (m.states.phase3 as 'open' | 'closed') ?? 'open',
       ],
       controlMode: m.telemetry.controlMode,
       networkError: m.telemetry.networkError,
       batteryPercent: m.telemetry.batteryPercent,
-      activation: (m.states.activation as 'on' | 'off') ?? 'off',
-      activationBit: server?.activationStatusBit ?? 'b1',
+      linkType: m.telemetry.linkType,
     });
     const set = new Set<string>();
     for (const byteIdx of [0, 1]) {
@@ -142,7 +144,7 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
     setBits(next);
   };
 
-  const defs: BitDef[] = type === 0x10 ? STATUS_BITS : COMMAND_BITS;
+  const defs: BitDef[] = type === 0x10 ? profile.statusBits : profile.commandBits;
 
   return (
     <Dialog
@@ -234,25 +236,25 @@ export default function FrameBuilder({ open, onClose }: { open: boolean; onClose
         <div className="mt-3">
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             <span className="text-[10px] text-slate-400">快捷：</span>
-            {(type === 0x00
-              ? [
-                  { label: '接地合', keys: ['1:7'] },
-                  { label: '接地分', keys: ['1:6'] },
-                  { label: '选相1合', keys: ['1:5'] },
-                  { label: '选相1分', keys: ['1:4'] },
-                  { label: '融冰合', keys: ['0:3'] },
-                  { label: '融冰分', keys: ['0:2'] },
-                  { label: '闭锁', keys: ['0:1'] },
-                  { label: '开锁', keys: ['0:0'] },
-                  { label: '活化开', keys: ['1:1'] },
-                  { label: '活化关(全0)', keys: [] as string[] },
-                ]
-              : []
-            ).map((p) => (
-              <Button key={p.label} size="xs" variant="subtle" onClick={() => setBits(new Set(p.keys))}>
-                {p.label}
+            {type === 0x00
+              ? profile.commandBits
+                  .filter((d) => d.slot !== 'spare' && d.kind)
+                  .map((d) => (
+                    <Button
+                      key={`${d.byte}:${d.bit}`}
+                      size="xs"
+                      variant="subtle"
+                      onClick={() => setBits(new Set([`${d.byte}:${d.bit}`]))}
+                    >
+                      {d.label.replace('刀闸 ', '').replace(' 合闸', '合').replace(' 分闸', '分')}
+                    </Button>
+                  ))
+              : null}
+            {type === 0x00 && profile.hasActivation ? (
+              <Button size="xs" variant="subtle" onClick={() => setBits(new Set())}>
+                活化关(全0)
               </Button>
-            ))}
+            ) : null}
             {type === 0x10 && target ? (
               <Button size="xs" variant="subtle" onClick={() => fillFromModule(target)}>
                 用当前状态填充

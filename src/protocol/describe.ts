@@ -1,5 +1,5 @@
 import { FRAME_DIR, FRAME_NAMES, FT, sideOf, toHexUpper, type DecodedFrame } from './frame';
-import { commandBitsOf, decodeCommand, describeStatus, statusBitsOf } from './bits';
+import { commandBitsOf, decodeCommand, describeStatus, getProfile, statusBitsOf, type ProtocolId } from './bits';
 import { decodeEnvFields, decodePowerFields, summarizePower, type FieldRow } from './power';
 
 export interface ParsedFrame {
@@ -20,7 +20,8 @@ export interface ParsedFrame {
   rawHex: string;
 }
 
-export function describe(frame: DecodedFrame): ParsedFrame {
+export function describe(frame: DecodedFrame, protocol: ProtocolId = 'mg400'): ParsedFrame {
+  const profile = getProfile(protocol);
   const typeName = FRAME_NAMES[frame.type];
   const known = typeName !== undefined;
   const direction = FRAME_DIR[frame.type] ?? 'rx';
@@ -44,8 +45,8 @@ export function describe(frame: DecodedFrame): ParsedFrame {
 
   switch (frame.type) {
     case FT.CMD: {
-      const { actions, reserved } = decodeCommand(frame.data);
-      base.bits = commandBitsOf(frame.data);
+      const { actions, reserved } = decodeCommand(frame.data, profile);
+      base.bits = commandBitsOf(frame.data, profile);
       base.summary = actions.length
         ? `动作命令：${actions.map((a) => a.label).join(' + ')}`
         : '动作命令：无有效动作位';
@@ -55,10 +56,12 @@ export function describe(frame: DecodedFrame): ParsedFrame {
       break;
     }
     case FT.DI: {
-      base.bits = statusBitsOf(frame.data);
-      base.summary = `DI 状态：${describeStatus(frame.data).join(' / ')}`;
-      base.fields = [{ label: '状态', value: describeStatus(frame.data).join('，') }];
-      base.fields.push({ label: '电量档', value: `${(frame.data[1] ?? 0) & 0x03}（对应 0/25/50/75%）` });
+      base.bits = statusBitsOf(frame.data, profile);
+      base.summary = `DI 状态：${describeStatus(frame.data, profile).join(' / ')}`;
+      base.fields = [{ label: '状态', value: describeStatus(frame.data, profile).join('，') }];
+      if (profile.id === 'mg400') {
+        base.fields.push({ label: '电量档', value: `${(frame.data[1] ?? 0) & 0x03}（对应 0/25/50/75%）` });
+      }
       break;
     }
     case FT.POWER: {

@@ -114,7 +114,8 @@ async function main() {
   const mod = await req('POST', '/api/modules', {
     towerName: '冒烟测试塔',
     moduleId: MODULE_ID,
-    phaseCount: 2,
+    // 显式带上活化，便于验证活化指令（默认新建不再包含活化）
+    devices: ['ground', 'phase1', 'phase2', 'lock', 'ice', 'activation'],
   });
   await req('POST', `/api/modules/${mod.id}/connect`);
   await sleep(600);
@@ -179,8 +180,6 @@ async function main() {
   await sleep(300);
   let st = await req('GET', '/api/state');
   assert(st.modules.find((x) => x.id === mod.id).states.activation === 'on', '活化应能置开');
-  const actDi = [...received].reverse().find((f) => f.type === 0x10);
-  assert(actDi.data[1] & 0x02, '活化开应在 0x10 低字节 b1 置 1');
   terminal.write(build(MODULE_ID, 0x00, [0x00, 0x02]));
   await sleep(300);
   st = await req('GET', '/api/state');
@@ -206,6 +205,28 @@ async function main() {
   assert(m2.link === 'online', '勾选「创建后立即连接」应立即上线');
   assert(m2.devices.join(',') === 'ground,phase1,lock,ice', '设备顺序应按传入顺序保存');
   log('✓ 创建即连接 / 设备顺序 断言通过');
+
+  // MG500：多一个接地刀闸、一个选相，0x10 位定义不同
+  const mod3 = await req('POST', '/api/modules', {
+    protocol: 'mg500',
+    towerName: 'MG500 塔',
+    moduleId: 21,
+    devices: ['ground', 'ground2', 'phase1', 'phase2', 'phase3', 'lock', 'ice'],
+    autoConnect: true,
+  });
+  await sleep(900);
+  const st3 = (await req('GET', '/api/state')).modules.find((x) => x.id === mod3.id);
+  assert(st3.link === 'online', 'MG500 模块应能上线');
+  const di3 = [...received].reverse().find((f) => f.type === 0x10 && f.id === 21);
+  assert(di3, 'MG500 应上报 0x10');
+  assert(di3.data[0] & 0x01, 'MG500 接地1 合位应在 Byte0 b0');
+  assert(di3.data[0] & 0x40, 'MG500 接地2 合位应在 Byte0 b6');
+  assert(di3.data[1] & 0x01, 'MG500 选相3 分位应在 Byte1 b0');
+  assert(!(di3.data[0] & 0x20), 'MG500 Byte0 b5 是接地2分位，默认不应置位');
+  // 同一位置在 MG400 下是「网络错误/备用」，不应被置位
+  const di1 = [...received].reverse().find((f) => f.type === 0x10 && f.id === MODULE_ID);
+  assert(di1 && !(di1.data[0] & 0x40), 'MG400 的 Byte0 b6 是备用位，不应置位');
+  log('✓ MG500 协议 断言通过（接地2 / 选相3 位映射）');
 }
 
 main()

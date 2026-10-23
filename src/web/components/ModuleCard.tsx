@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { ModuleSnapshot, Telemetry } from '@/core/types';
 import { deviceButtons, deviceMeta, hasStatusBit } from '@/core/types';
-import { KIND_LABEL, encodeStatus, type DeviceState } from '@/protocol/bits';
+import { getProfile, KIND_LABEL, type DeviceState } from '@/protocol/bits';
 import { encodeFrame, toHexUpper } from '@/protocol/frame';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
@@ -59,16 +59,21 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
 
   const copyStatusFrame = () => {
     const st = m.states;
-    const data = encodeStatus({
+    const profile = getProfile(m.protocol);
+    const data = profile.encodeStatus({
       ground: (st.ground as DeviceState) ?? 'closed',
+      ground2: st.ground2 as DeviceState | undefined,
       ice: (st.ice as DeviceState) ?? 'open',
       lock: (st.lock as DeviceState) ?? 'locked',
-      phases: [(st.phase1 as DeviceState) ?? 'open', (st.phase2 as DeviceState) ?? 'open'],
+      phases: [
+        (st.phase1 as DeviceState) ?? 'open',
+        (st.phase2 as DeviceState) ?? 'open',
+        (st.phase3 as DeviceState) ?? 'open',
+      ],
       controlMode: m.telemetry.controlMode,
       networkError: m.telemetry.networkError,
       batteryPercent: m.telemetry.batteryPercent,
-      activation: (st.activation as 'on' | 'off') ?? 'off',
-      activationBit: server?.activationStatusBit ?? 'b1',
+      linkType: m.telemetry.linkType,
     });
     const hex = toHexUpper(encodeFrame({ id: m.moduleId, type: 0x10, data }));
     void navigator.clipboard.writeText(hex).then(
@@ -100,6 +105,7 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
             <div className="flex items-center gap-1.5">
               <span className="truncate text-[13px] font-medium text-slate-800">{m.towerName}</span>
               <Badge className="font-mono">#{m.moduleId}</Badge>
+              <Badge tone="blue">{m.protocol.toUpperCase()}</Badge>
               <Badge tone={m.moduleId & 1 ? 'blue' : 'slate'}>{m.moduleId & 1 ? '大号侧' : '小号侧'}</Badge>
               {autoOn ? <Badge tone="amber">自动</Badge> : null}
             </div>
@@ -336,13 +342,27 @@ export default function ModuleCard({ m }: { m: ModuleSnapshot }) {
                 <option value="local">本地</option>
               </Select>
             </label>
-            <div className="pt-4">
-              <Switch
-                checked={draft.networkError}
-                onChange={(v) => setDraft({ ...draft, networkError: v })}
-                label="网络错误位"
-              />
-            </div>
+            {m.protocol === 'mg500' ? (
+              <label className="text-[10px] text-slate-500">
+                通信链路
+                <Select
+                  className="mt-0.5 h-7"
+                  value={draft.linkType ?? '4g'}
+                  onChange={(e) => setDraft({ ...draft, linkType: e.target.value as '4g' | 'fiber' })}
+                >
+                  <option value="4g">4G 通道</option>
+                  <option value="fiber">光纤通道</option>
+                </Select>
+              </label>
+            ) : (
+              <div className="pt-4">
+                <Switch
+                  checked={draft.networkError}
+                  onChange={(v) => setDraft({ ...draft, networkError: v })}
+                  label="网络错误位"
+                />
+              </div>
+            )}
           </div>
           <div className="mt-2 flex justify-end gap-1.5">
             <Button size="xs" variant="ghost" onClick={() => setEditTel(false)}>
@@ -435,7 +455,7 @@ function DeviceRow({
   const current = m.states[deviceKey];
   const buttons = deviceButtons(deviceKey, current);
   const pending = m.pending.filter((p) => p.key === deviceKey);
-  const showNoBitTip = !hasStatusBit(deviceKey) && deviceKey.startsWith('phase');
+  const showNoBitTip = !hasStatusBit(deviceKey, m.protocol) && deviceKey.startsWith('phase');
 
   return (
     <div

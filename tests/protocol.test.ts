@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { crc16Modbus } from '../src/protocol/crc';
 import { FrameDecoder, decodeFrame, encodeFrame, parseHex, toHex } from '../src/protocol/frame';
-import { decodeCommand, encodeCommand, encodeStatus, coarseBattery, defaultStates, type StatusSnapshot } from '../src/protocol/bits';
-import { deviceButtons, orderDevices } from '../src/core/types';
+import {
+  decodeCommand,
+  encodeCommand,
+  encodeMg500Status,
+  encodeStatus,
+  coarseBattery,
+  defaultStates,
+  getProfile,
+  type StatusSnapshot,
+} from '../src/protocol/bits';
+import { deviceButtons, orderDevices, presetStates } from '../src/core/types';
 import { encodePower } from '../src/protocol/power';
 import { describe as describeFrame } from '../src/protocol/describe';
 
@@ -14,7 +23,6 @@ const DEFAULT_STATUS: StatusSnapshot = {
   controlMode: 'remote',
   networkError: false,
   batteryPercent: 62,
-  activation: 'off',
 };
 
 describe('CRC-16/MODBUS', () => {
@@ -34,7 +42,7 @@ describe('组帧', () => {
 
   it('0x10 默认状态（ID 13）', () => {
     const buf = encodeFrame({ id: 13, type: 0x10, data: encodeStatus(DEFAULT_STATUS) });
-    expect(toHex(buf)).toBe('5a 47 05 00 0d 10 0d 51 34 1c');
+    expect(toHex(buf)).toBe('5a 47 05 00 0d 10 0d 52 74 1d');
   });
 
   it('0x01 命令应答（ID 13）', () => {
@@ -169,22 +177,11 @@ describe('0x10 状态编码', () => {
     expect([0, 24, 25, 49, 50, 74, 75, 100].map(coarseBattery)).toEqual([0, 0, 1, 1, 2, 2, 3, 3]);
   });
 
-  it('活化状态占低字节 b1（默认），开=1 关=0', () => {
-    const [, on] = encodeStatus({ ...DEFAULT_STATUS, activation: 'on' });
-    expect(on & 0x02).toBe(0x02);
-    const [, off] = encodeStatus({ ...DEFAULT_STATUS, activation: 'off' });
-    expect(off & 0x02).toBe(0x00);
-  });
-
-  it('活化改到 b0 时 b1 让给电量档', () => {
-    const [, on] = encodeStatus({ ...DEFAULT_STATUS, activation: 'on', activationBit: 'b0' });
-    expect(on & 0x01).toBe(0x01);
-    expect(on & 0x02).toBe(0x02); // 电量 62% ≥ 50%，占 b1
-  });
-
-  it('none 模式保留 4 档电量', () => {
-    const [, v] = encodeStatus({ ...DEFAULT_STATUS, activation: 'on', activationBit: 'none' });
-    expect(v & 0x03).toBe(2); // 62% → 档 2
+  it('低字节 b1~b0 按 4 档电量编码，不含活化位', () => {
+    const [, v62] = encodeStatus({ ...DEFAULT_STATUS, batteryPercent: 62 });
+    expect(v62 & 0x03).toBe(2);
+    const [, v30] = encodeStatus({ ...DEFAULT_STATUS, batteryPercent: 30 });
+    expect(v30 & 0x03).toBe(1);
   });
 });
 
@@ -281,11 +278,30 @@ describe('默认状态与设备顺序', () => {
   it('默认初始态：接地合、选相分、锁闭锁、融冰分、活化关', () => {
     expect(defaultStates(2)).toEqual({
       ground: 'closed',
+      ground2: 'closed',
       ice: 'open',
       lock: 'locked',
       activation: 'off',
       phase1: 'open',
       phase2: 'open',
+    });
+  });
+
+  it('一键预设包含选相刀闸：初始态分闸、融冰态合闸', () => {
+    const devices = ['ground', 'phase1', 'phase2', 'lock', 'ice'];
+    expect(presetStates(devices, 'initial')).toMatchObject({
+      ground: 'closed',
+      phase1: 'open',
+      phase2: 'open',
+      lock: 'locked',
+      ice: 'open',
+    });
+    expect(presetStates(devices, 'melt')).toMatchObject({
+      ground: 'open',
+      phase1: 'closed',
+      phase2: 'closed',
+      lock: 'unlocked',
+      ice: 'closed',
     });
   });
 
@@ -307,5 +323,60 @@ describe('默认状态与设备顺序', () => {
     expect(deviceButtons('lock', 'locked').map((b) => b.label)).toEqual(['闭锁到位', '开锁中', '开锁到位']);
     expect(deviceButtons('phase1', 'closed').map((b) => b.label)).toEqual(['分闸到位', '分闸中', '合闸到位']);
     expect(deviceButtons('activation', 'off').map((b) => b.label)).toEqual(['活化关闭', '活化开启']);
+    expect(deviceButtons('ground2', 'closed').map((b) => b.label)).toEqual(['合闸到位', '分闸中', '分闸到位']);
+  });
+});
+
+describe('MG500 协议', () => {
+  const mg500Status: StatusSnapshot = {
+    ground: 'closed',
+    ground2: 'open',
+    ice: 'open',
+    lock: 'locked',
+    phases: ['closed', 'open', 'closed'],
+    controlMode: 'remote',
+    networkError: true,
+    batteryPercent: 86,
+    linkType: '4g',
+  };
+
+  it('0x10 编码：接地2、选相3、通信链路占用原 MG400 的备用/电量位', () => {
+    const [b0, b1] = encodeMg500Status(mg500Status);
+    expect(b0 & 0x01).toBe(0x01); // 接地1合
+    expect(b0 & 0x20).toBe(0x20); // 接地2分（MG400 这里是网络错误）
+    expect(b0 & 0x80).toBe(0x00); // 4G
+    expect(b1 & 0x40).toBe(0x40); // 选相1合
+    expect(b1 & 0x08).toBe(0x08); // 选相2分
+    expect(b1 & 0x02).toBe(0x02); // 选相3合（MG400 这里是电量档）
+  });
+
+  it('同一份状态在两种协议下字节不同，不能混用', () => {
+    const mg500 = encodeMg500Status(mg500Status);
+    const mg400 = encodeStatus({ ...mg500Status, networkError: false });
+    expect([...mg500]).not.toEqual([...mg400]);
+  });
+
+  it('MG400 编码忽略 ground2', () => {
+    const a = encodeStatus({ ...DEFAULT_STATUS, ground2: 'closed' });
+    const b = encodeStatus({ ...DEFAULT_STATUS, ground2: 'open' });
+    expect([...a]).toEqual([...b]);
+  });
+
+  it('MG500 命令帧：高字节扩展为接地2 / 选相3', () => {
+    const p = getProfile('mg500');
+    expect(decodeCommand(Uint8Array.from([0x80, 0x00]), p).actions.map((x) => `${x.slot}:${x.kind}`)).toEqual([
+      'ground2:close',
+    ]);
+    expect(decodeCommand(Uint8Array.from([0x20, 0x00]), p).actions.map((x) => `${x.slot}:${x.kind}`)).toEqual([
+      'phase3:close',
+    ]);
+    // MG400 下同样的 0x80 是保留位，没有动作
+    expect(decodeCommand(Uint8Array.from([0x80, 0x00])).actions).toHaveLength(0);
+  });
+
+  it('MG500 没有电池活化指令', () => {
+    expect(getProfile('mg500').hasActivation).toBe(false);
+    expect(getProfile('mg500').maxPhases).toBe(3);
+    expect(getProfile('mg400').maxPhases).toBe(2);
   });
 });

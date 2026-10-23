@@ -1,44 +1,75 @@
 import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, Check } from 'lucide-react';
+import { getProfile, type ProtocolId } from '@/protocol/bits';
 import { deviceMeta, orderDevices } from '@/core/types';
 import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
-import { Badge, Button, Dialog, Field, Input, Select, Switch, cn } from './ui';
+import { Button, Dialog, Field, Input, Select, Switch, cn } from './ui';
 
-const ALL_KEYS = ['ground', 'phase1', 'phase2', 'phase3', 'phase4', 'lock', 'ice', 'activation'];
-const DEFAULTS = orderDevices(ALL_KEYS);
+const ALL_KEYS = ['ground', 'ground2', 'phase1', 'phase2', 'phase3', 'lock', 'ice', 'activation'];
+
+const PROTOCOLS: Array<{ id: ProtocolId; label: string; hint: string }> = [
+  { id: 'mg400', label: 'MG400', hint: '1 个接地刀闸、最多 2 个选相、电量档、电池活化' },
+  { id: 'mg500', label: 'MG500', hint: '2 个接地刀闸、最多 3 个选相、通信链路上报、无电量档/活化' },
+];
 
 export default function NewModuleDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const run = useStore((s) => s.run);
   const toast = useStore((s) => s.toast);
   const modules = useStore((s) => s.state?.modules) ?? [];
 
+  const [protocol, setProtocol] = useState<ProtocolId>('mg400');
   const [towerName, setTowerName] = useState('');
   const [moduleId, setModuleId] = useState('');
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     ground: true,
     ice: true,
     lock: true,
-    activation: true,
+    activation: false,
   });
   const [phaseCount, setPhaseCount] = useState(2);
-  const [order, setOrder] = useState<string[]>(DEFAULTS);
+  const [order, setOrder] = useState<string[]>(() => orderDevices(ALL_KEYS));
   const [connectNow, setConnectNow] = useState(true);
+
+  const profile = getProfile(protocol);
+  const deviceToggles = useMemo(() => {
+    const fixed = profile.devices.filter((k) => !k.startsWith('phase') && k !== 'activation');
+    const items = fixed.map((key) => ({ key, label: deviceMeta(key).name }));
+    if (profile.hasActivation) items.push({ key: 'activation', label: '电池活化' });
+    return items;
+  }, [profile]);
 
   const selected = useMemo(() => {
     const keys = new Set<string>();
-    for (const key of ['ground', 'ice', 'lock', 'activation']) if (enabled[key]) keys.add(key);
-    for (let i = 1; i <= phaseCount; i++) keys.add(`phase${i}`);
+    for (const key of profile.devices) {
+      if (key.startsWith('phase')) continue;
+      if (key === 'activation' ? enabled.activation : enabled[key]) keys.add(key);
+    }
+    for (let i = 1; i <= Math.min(phaseCount, profile.maxPhases); i++) keys.add(`phase${i}`);
     return order.filter((k) => keys.has(k));
-  }, [enabled, phaseCount, order]);
+  }, [enabled, phaseCount, profile, order]);
 
   const reset = () => {
     setTowerName('');
     setModuleId('');
-    setEnabled({ ground: true, ice: true, lock: true, activation: true });
+    setProtocol('mg400');
+    setEnabled({ ground: true, ice: true, lock: true, activation: false });
     setPhaseCount(2);
-    setOrder(DEFAULTS);
+    setOrder(orderDevices(ALL_KEYS));
     setConnectNow(true);
+  };
+
+  const pickProtocol = (id: ProtocolId) => {
+    setProtocol(id);
+    const next = getProfile(id);
+    setEnabled({
+      ground: true,
+      ground2: next.devices.includes('ground2'),
+      ice: true,
+      lock: true,
+      activation: false,
+    });
+    setPhaseCount((n) => Math.min(n, next.maxPhases));
   };
 
   const move = (key: string, dir: -1 | 1) => {
@@ -63,6 +94,7 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
     }
     if (selected.length === 0) throw new Error('至少要选择一个设备');
     await api.createModule({
+      protocol,
       towerName: towerName.trim() || `铁塔 ${id}`,
       moduleId: id,
       devices: selected,
@@ -78,7 +110,7 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
       open={open}
       onClose={onClose}
       title="新建主控模块"
-      description="一个模块对应一条独立 TCP 连接。设备按下方顺序展示，可上下调整。"
+      description="一个模块对应一条独立 TCP 连接。协议不同，0x10 状态位定义不同，不能混用。"
       width="max-w-2xl"
       footer={
         <>
@@ -93,6 +125,29 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
       }
     >
       <div className="space-y-3">
+        <div>
+          <div className="mb-1 text-[11px] font-medium text-slate-600">协议</div>
+          <div className="grid grid-cols-2 gap-2">
+            {PROTOCOLS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => pickProtocol(p.id)}
+                className={cn(
+                  'rounded-lg border px-2 py-1.5 text-left transition-colors active:scale-[0.99]',
+                  protocol === p.id
+                    ? 'border-slate-800 bg-slate-900 text-white'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+                )}
+              >
+                <div className="text-[12px] font-medium">{p.label}</div>
+                <div className={cn('mt-0.5 text-[10px]', protocol === p.id ? 'text-slate-300' : 'text-slate-400')}>
+                  {p.hint}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <Field label="铁塔号（仅用于界面区分）">
             <Input value={towerName} placeholder="例如 220kV 桂山线 #12 塔" onChange={(e) => setTowerName(e.target.value)} />
@@ -110,12 +165,7 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
         <div>
           <div className="mb-1 text-[11px] font-medium text-slate-600">选择设备</div>
           <div className="grid grid-cols-4 gap-2">
-            {[
-              { key: 'ground', label: '接地刀闸' },
-              { key: 'ice', label: '融冰刀闸' },
-              { key: 'lock', label: '融冰锁' },
-              { key: 'activation', label: '电池活化' },
-            ].map((d) => (
+            {deviceToggles.map((d) => (
               <button
                 key={d.key}
                 onClick={() => setEnabled({ ...enabled, [d.key]: !enabled[d.key] })}
@@ -141,17 +191,15 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
           <div className="mt-2 flex items-center gap-2">
             <span className="shrink-0 whitespace-nowrap text-[11px] text-slate-500">选相刀闸数量</span>
             <Select className="h-7 w-20" value={phaseCount} onChange={(e) => setPhaseCount(Number(e.target.value))}>
-              {[0, 1, 2, 3, 4].map((n) => (
+              {Array.from({ length: profile.maxPhases + 1 }, (_, i) => i).map((n) => (
                 <option key={n} value={n}>
                   {n} 个
                 </option>
               ))}
             </Select>
-            {phaseCount > 2 ? (
-              <Badge tone="amber">第 3 个起无状态位</Badge>
-            ) : (
-              <span className="whitespace-nowrap text-[10px] text-slate-400">协议只定义了 1、2 两组合/分位</span>
-            )}
+            <span className="whitespace-nowrap text-[10px] text-slate-400">
+              {profile.label} 最多 {profile.maxPhases} 个
+            </span>
           </div>
         </div>
 
@@ -162,7 +210,7 @@ export default function NewModuleDialog({ open, onClose }: { open: boolean; onCl
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-1">
             {selected.length === 0 ? (
-              <div className="px-2 py-4 text-center text-[11px] text-slate-400">还没有选择设备</div>
+              <div className="px-2 py-3 text-center text-[11px] text-slate-400">还没有选择设备</div>
             ) : (
               selected.map((key, index) => (
                 <div key={key} className="flex items-center gap-2 rounded-md bg-white px-2 py-1">

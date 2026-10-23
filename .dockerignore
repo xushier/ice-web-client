@@ -8,6 +8,9 @@ tests
 docs
 coverage
 *.log
+*.pdf
+*.docx
+*.htm
 .env
 .env.*
 .DS_Store
