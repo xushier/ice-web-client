@@ -111,6 +111,10 @@ export default function ModuleCard({ m, onEdit }: { m: ModuleSnapshot; onEdit: (
   };
 
   const doReport = async (opts: { includePower?: boolean; includeEnv?: boolean; history?: boolean }, label: string) => {
+    if (m.link !== 'online') {
+      toast('模块当前不在线，先点右上角电源按钮连接', 'error');
+      return;
+    }
     setBusy(true);
     try {
       await api.report(m.id, opts);
