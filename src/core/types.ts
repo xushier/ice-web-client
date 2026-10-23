@@ -28,6 +28,12 @@ export interface ServerConfig {
   autoParallel: boolean;
   /** 收到 0x00 后立即回 0x01 */
   ackCommand: boolean;
+  /** 塔视图动画：接地/选相刀闸分合闸时长（秒） */
+  animSwitchSec: number;
+  /** 塔视图动画：融冰锁开/闭锁时长（秒） */
+  animLockSec: number;
+  /** 塔视图动画：融冰刀闸分合闸时长（秒） */
+  animIceSec: number;
 }
 
 export const DEFAULT_SERVER: ServerConfig = {
@@ -48,6 +54,9 @@ export const DEFAULT_SERVER: ServerConfig = {
   autoJitterMs: 0,
   autoParallel: false,
   ackCommand: true,
+  animSwitchSec: 5,
+  animLockSec: 10,
+  animIceSec: 15,
 };
 
 export interface Telemetry {

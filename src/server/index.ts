@@ -8,7 +8,7 @@ import { Manager } from '../core/manager';
 import { encodeFrame, parseHex, toHexUpper } from '../protocol/frame';
 import type { ModuleConfig, ServerConfig } from '../core/types';
 
-const VERSION = '0.2.1';
+const VERSION = '0.3.0';
 const PORT = Number(process.env.PORT ?? 8080);
 const DATA_DIR = process.env.DATA_DIR ?? path.join(process.cwd(), 'data');
 const WEB_DIR = path.resolve(process.env.WEB_DIR ?? 'dist/web');

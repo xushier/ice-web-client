@@ -296,6 +296,9 @@ export class Manager {
     this.server.statusIntervalSec = clamp(Number(this.server.statusIntervalSec), 5, 3600);
     this.server.powerIntervalSec = clamp(Number(this.server.powerIntervalSec), 30, 86400);
     this.server.envIntervalSec = clamp(Number(this.server.envIntervalSec), 120, 3600);
+    this.server.animSwitchSec = clamp(Number(this.server.animSwitchSec), 1, 120);
+    this.server.animLockSec = clamp(Number(this.server.animLockSec), 1, 120);
+    this.server.animIceSec = clamp(Number(this.server.animIceSec), 1, 120);
     for (const s of this.sessions.values()) s.applyServerConfig();
     this.log(null, `服务器参数更新：${this.server.host}:${this.server.port}`);
     this.saveDebounced();

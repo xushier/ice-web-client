@@ -207,6 +207,36 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
           </p>
         </section>
 
+        <section>
+          <h3 className="mb-2 text-[11px] font-medium text-slate-500">塔视图动画时长</h3>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="接地 / 选相刀闸 (秒)" hint="默认 5 秒">
+              <Input
+                value={draft.animSwitchSec}
+                inputMode="numeric"
+                onChange={(e) => set('animSwitchSec', Number(e.target.value.replace(/[^\d]/g, '')) || 0)}
+              />
+            </Field>
+            <Field label="融冰锁 (秒)" hint="默认 10 秒">
+              <Input
+                value={draft.animLockSec}
+                inputMode="numeric"
+                onChange={(e) => set('animLockSec', Number(e.target.value.replace(/[^\d]/g, '')) || 0)}
+              />
+            </Field>
+            <Field label="融冰刀闸 (秒)" hint="默认 15 秒">
+              <Input
+                value={draft.animIceSec}
+                inputMode="numeric"
+                onChange={(e) => set('animIceSec', Number(e.target.value.replace(/[^\d]/g, '')) || 0)}
+              />
+            </Field>
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
+            只影响塔视图里的动作时长；设备状态仍然在点击时立即上报。范围 1~120 秒。
+          </p>
+        </section>
+
         <section className="border-t border-slate-100 pt-3">
           <h3 className="mb-2 text-[11px] font-medium text-slate-500">配置迁移</h3>
           <div className="flex gap-2">

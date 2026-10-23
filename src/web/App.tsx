@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
+  Box,
   ChevronLeft,
   ChevronRight,
   FolderCog,
+  LayoutGrid,
   Plus,
   Radio,
   Send,
@@ -13,6 +15,7 @@ import { api } from '@/web/lib/api';
 import { useStore } from '@/web/lib/store';
 import type { ModuleSnapshot } from '@/core/types';
 import ModuleCard from '@/web/components/ModuleCard';
+import TowerView from '@/web/components/TowerView';
 import NewModuleDialog from '@/web/components/NewModuleDialog';
 import SettingsDialog from '@/web/components/SettingsDialog';
 import FramePanel from '@/web/components/FramePanel';
@@ -55,6 +58,9 @@ export default function App() {
   const [framesOpen, setFramesOpen] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === '1');
+  const [view, setView] = useState<'cards' | 'towers'>(() =>
+    localStorage.getItem('view-mode') === 'towers' ? 'towers' : 'cards',
+  );
 
   useEffect(() => {
     init();
@@ -73,6 +79,11 @@ export default function App() {
   const bulk = async (action: 'connect' | 'disconnect') => {
     for (const m of modules) await api.link(m.id, action);
     toast(action === 'connect' ? `已对 ${modules.length} 个模块发起连接` : `已断开 ${modules.length} 个模块`);
+  };
+
+  const pickView = (next: 'cards' | 'towers') => {
+    setView(next);
+    localStorage.setItem('view-mode', next);
   };
 
   return (
@@ -108,6 +119,30 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <div className="flex overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <button
+              onClick={() => pickView('cards')}
+              title="卡片视图"
+              className={cn(
+                'flex items-center gap-1 px-2 py-1 text-[11px] transition-colors',
+                view === 'cards' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              <LayoutGrid className="size-3" />
+              卡片
+            </button>
+            <button
+              onClick={() => pickView('towers')}
+              title="塔视图：3D 铁塔 + 设备动作动画"
+              className={cn(
+                'flex items-center gap-1 border-l border-slate-200 px-2 py-1 text-[11px] transition-colors',
+                view === 'towers' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              <Box className="size-3" />
+              塔视图
+            </button>
+          </div>
           <Button size="sm" variant="primary" onClick={() => setNewOpen(true)}>
             <Plus className="size-3.5" />
             新建模块
@@ -219,6 +254,14 @@ export default function App() {
                 <Plus className="size-3.5" />
                 新建模块
               </Button>
+            </div>
+          ) : view === 'towers' && server ? (
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {modules.map((m) => (
+                <div key={m.id} id={`mod-${m.id}`}>
+                  <TowerView m={m} server={server} />
+                </div>
+              ))}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
